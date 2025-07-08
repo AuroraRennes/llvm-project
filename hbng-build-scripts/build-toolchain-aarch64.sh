@@ -1,8 +1,10 @@
 #!/bin/bash
 
+BUILD_DIR = build-aarch64
+
 cmake -G Ninja \
   -S llvm \
-  -B build-aarch64 \
+  -B ${BUILD_DIR} \
   -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_SYSTEM_NAME=Linux \
   -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
@@ -15,3 +17,5 @@ cmake -G Ninja \
   -DLLVM_TARGETS_TO_BUILD="AArch64" \
   -DLLVM_DEFAULT_TARGET_TRIPLE=aarch64-linux-gnu \
   -DLLVM_ENABLE_LLD=OFF \
+
+ninja -C ${BUILD_DIR}

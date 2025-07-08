@@ -1,8 +1,10 @@
 #!/bin/bash
 
+BUILD_DIR = build-aarch64-compiler-rt-builtins
+
 cmake -G Ninja \
   -S compiler-rt/lib/builtins \
-  -B build-aarch64-compiler-rt-builtins \
+  -B ${BUILD_DIR} \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_SYSTEM_NAME=Linux \
   -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
@@ -19,3 +21,5 @@ cmake -G Ninja \
   -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON \
   -DCOMPILER_RT_USE_BUILTINS_LIBRARY=TRUE \
   -DCOMPILER_RT_EXCLUDE_ATOMIC_BUILTIN=FALSE
+
+ninja -C ${BUILD_DIR}
