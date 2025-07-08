@@ -165,6 +165,11 @@ void AArch64HBNGSendToSTM::insertStoreForAddressOperand(MachineBasicBlock &MBB, 
         case AArch64::LDRWpre: case AArch64::LDRWpost: case AArch64::LDRSpre: case AArch64::LDRSpost:
         case AArch64::LDRXpre: case AArch64::LDRXpost: case AArch64::LDRDpre: case AArch64::LDRDpost:
         case AArch64::LDRQpre: case AArch64::LDRQpost:
+        //Atomic
+        case AArch64::LDARB: case AArch64::LDAXRB: case AArch64::LDXRB: case AArch64::LDLARB:
+        case AArch64::LDARH: case AArch64::LDAXRH: case AArch64::LDXRH: case AArch64::LDLARH:
+        case AArch64::LDARW: case AArch64::LDAXRW: case AArch64::LDXRW: case AArch64::LDLARW:
+        case AArch64::LDARX: case AArch64::LDAXRX: case AArch64::LDXRX: case AArch64::LDLARX:
         // Scaled
         case AArch64::STRBui: case AArch64::STRBBui: case AArch64::STURBBi:
         case AArch64::STRHui: case AArch64::STRHHui:
@@ -183,6 +188,12 @@ void AArch64HBNGSendToSTM::insertStoreForAddressOperand(MachineBasicBlock &MBB, 
         case AArch64::STRWpost: case AArch64::STRWpre: case AArch64::STRSpost: case AArch64::STRSpre:
         case AArch64::STRXpost: case AArch64::STRXpre: case AArch64::STRDpost: case AArch64::STRDpre:
         case AArch64::STRQpost: case AArch64::STRQpre:
+        // Atomic
+        case AArch64::STLXRB: case AArch64::STXRB: case AArch64::STLRB: case AArch64::STLLRB:
+        case AArch64::STLXRH: case AArch64::STXRH: case AArch64::STLRH: case AArch64::STLLRH:
+        case AArch64::STLXRW: case AArch64::STXRW: case AArch64::STLRW: case AArch64::STLLRW:
+        case AArch64::STLXRX: case AArch64::STXRX: case AArch64::STLRX: case AArch64::STLLRX:
+
             // Store the value of the base register into [Target Reg]
             BaseRegisterIndex = isPreOrPostIndexed(Opcode) ? 2 : 1;
             BaseRegister = MI.getOperand(BaseRegisterIndex).getReg();
@@ -269,6 +280,10 @@ void AArch64HBNGSendToSTM::insertStoreForAddressOperand(MachineBasicBlock &MBB, 
         case AArch64::STPWpre: case AArch64::STPWpost: case AArch64::STPSpre: case AArch64::STPSpost:
         case AArch64::STPXpre: case AArch64::STPXpost: case AArch64::STPDpre: case AArch64::STPDpost:
         case AArch64::STPQpre: case AArch64::STPQpost:
+        case AArch64::LDAXPW: case AArch64::LDXPW:
+        case AArch64::LDAXPX: case AArch64::LDXPX:
+        case AArch64::STLXPW: case AArch64::STXPW:
+        case AArch64::STLXPX: case AArch64::STXPX:
             // Store the value of the base register and the register offset into [Target Reg]
             BaseRegisterIndex = isPreOrPostIndexed(Opcode) ? 3 : 2;
             BaseRegister = MI.getOperand(BaseRegisterIndex).getReg();
