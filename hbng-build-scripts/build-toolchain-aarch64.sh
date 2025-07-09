@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BUILD_DIR = build-aarch64
+BUILD_DIR=build-aarch64
 
 cmake -G Ninja \
   -S llvm \

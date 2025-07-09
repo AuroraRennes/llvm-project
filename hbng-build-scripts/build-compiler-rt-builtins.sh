@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BUILD_DIR = build-aarch64-compiler-rt-builtins
+BUILD_DIR=build-aarch64-compiler-rt-builtins
 
 cmake -G Ninja \
   -S compiler-rt/lib/builtins \
