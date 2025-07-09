@@ -520,10 +520,6 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
   }
 
   switch (MI.getOpcode()) {
-    default:
-        Annotations.push_back(Unsupported + "\n");
-        LLVM_DEBUG(dbgs() << Unsupported << "\n");
-        break;
     //=== ARITHMETIC ===//
     // One Register or Immediate
     case AArch64::NEGv2i32: case AArch64::NEGv4i16: case AArch64::NEGv4i32:
@@ -547,6 +543,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
       break;
     case AArch64::SUBXrr: case AArch64::SUBXrx: case AArch64::SUBXrs:
     case AArch64::SUBWrr: case AArch64::SUBWrx: case AArch64::SUBWrs:
+    case AArch64::SUBv2i64:
     case AArch64::FSUBDrr: case AArch64::FSUBSrr: case AArch64::FSUBv4f32:
       Annotations = genRdTwoOperandsAnnotation(MI, "sub", /*Carry=*/false, /*Flags=*/false);
       break;
@@ -567,6 +564,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
       Annotations = genRdTwoOperandsAnnotation(MI, "ari", /*Carry=*/true, /*Flags=*/false);
       break;
     case AArch64::UMULHrr: case AArch64::SMULHrr:
+    case AArch64::MULv2i32: case AArch64::MULv4i32:
     case AArch64::FMULSrr: case AArch64::FMULDrr:
     case AArch64::FNMULSrr: case AArch64::FNMULDrr:
     case AArch64::FMULv2f32: case AArch64::FMULv2f64:
@@ -586,14 +584,20 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::FCMPDri: case AArch64::FCMPSri:
       Annotations = genRdTwoOperandsAnnotation(MI, "ari", /*Carry=*/false, /*Flags=*/true);
       break;
-    case AArch64::UDIVWr: case AArch64::UDIVXr: case AArch64::FDIVSrr: case AArch64::FDIVDrr:
+    case AArch64::UDIVWr: case AArch64::UDIVXr:
+    case AArch64::SDIVWr: case AArch64::SDIVXr:
+    case AArch64::FDIVSrr: case AArch64::FDIVDrr:
       Annotations = genRdTwoOperandsAnnotation(MI, "ari", false, false);
       break;
     // Three registers
     case AArch64::MADDWrrr: case AArch64::MADDXrrr:
-    case AArch64::FMADDHrrr: case AArch64::FMADDSrrr: case AArch64::FMADDDrrr:
-    case AArch64::SMADDLrrr: case AArch64::UMADDLrrr:
     case AArch64::MSUBWrrr: case AArch64::MSUBXrrr:
+    case AArch64::UMSUBLrrr: case AArch64::UMADDLrrr:
+    case AArch64::SMSUBLrrr: case AArch64::SMADDLrrr:
+    case AArch64::FMADDHrrr: case AArch64::FMADDSrrr: case AArch64::FMADDDrrr:
+    case AArch64::FNMADDHrrr: case AArch64::FNMADDSrrr: case AArch64::FNMADDDrrr:
+    case AArch64::FMSUBHrrr: case AArch64::FMSUBSrrr: case AArch64::FMSUBDrrr:
+    case AArch64::FNMSUBHrrr: case AArch64::FNMSUBSrrr: case AArch64::FNMSUBDrrr:
     case AArch64::FMLAv1i32_indexed: case AArch64::FMLAv1i64_indexed:
     case AArch64::FMULv1i32_indexed: case AArch64::FMULv1i64_indexed:
       // TODO: Check for the carry?
@@ -602,6 +606,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
 
     //=== FP COMPARISONS ===//
     case AArch64::FCMPDrr: case AArch64::FCMPSrr: case AArch64::FMAXNMSrr: case AArch64::FMAXNMDrr:
+    case AArch64::FCMPEDri: case AArch64::FCMPEDrr:
       Annotations = genRdTwoOperandsAnnotation(MI, "cmp", false, true);
       break;
     case AArch64::FCMEQv2f32: case AArch64::FCMEQv2f64: case AArch64::FCMEQv4f32:
@@ -611,9 +616,9 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
       Annotations = genRdOneOperandAnnotation(MI, "cmp");
       break;
 
-
     //=== FP CONVERSION ===//
-    case AArch64::FCVTDSr: case AArch64::FCVTZSUWSr:
+    case AArch64::FCVTDSr: case AArch64::FCVTSDr:
+    case AArch64::FCVTZSUWSr:
     case AArch64::FCVTZSUWDr: case AArch64::FCVTZUUWDr:
     case AArch64::SCVTFUWSri: case AArch64::SCVTFUWDri: case AArch64::SCVTFUXSri: case AArch64::SCVTFUXDri:
     case AArch64::UCVTFUWSri: case AArch64::UCVTFUWDri: case AArch64::UCVTFUXSri: case AArch64::UCVTFUXDri:
@@ -665,8 +670,10 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::MOVNWi: case AArch64::MOVNXi:
     case AArch64::MOVZXi: case AArch64::MOVZWi:
     case AArch64::MOVID: case AArch64::FMOVSi: case AArch64::FMOVDi:
-    case AArch64::MOVIv2i32: case AArch64::MVNIv2i32: case AArch64::MVNIv4i32:
-    case AArch64::MVNIv2s_msl: case AArch64::MVNIv4s_msl: case AArch64::MOVIv2d_ns:
+    case AArch64::MOVIv2i32: case AArch64::MOVIv4i32:
+    case AArch64::MVNIv2i32: case AArch64::MVNIv4i32:
+    case AArch64::MVNIv2s_msl: case AArch64::MVNIv4s_msl:
+    case AArch64::MOVIv2d_ns: case AArch64::MOVIv16b_ns:
       Annotations = genRdImmAnnotation(MI, "mov", /*Sticky=*/false);
       break;
     // Zero
@@ -683,6 +690,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::UBFMXri: case AArch64::UBFMWri:
     case AArch64::BFMWri: case AArch64::BFMXri:
     case AArch64::EXTRWrri: case AArch64::EXTRXrri:
+    case AArch64::EXTv8i8: case AArch64::EXTv16i8:
       Annotations = genRdThreeOperandsAnnotation(MI, "bit", false, false);
       break;
     case AArch64::XTNv2i32: case AArch64::XTNv4i32:
@@ -718,6 +726,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::REVWr: case AArch64::REVXr:
     case AArch64::REV32v4i16: case AArch64::REV32v8i16: case AArch64::REV32v8i8: case AArch64::REV32v16i8:
     case AArch64::REV64v4i16: case AArch64::REV64v8i16: case AArch64::REV64v2i32: case AArch64::REV64v4i32:
+    case AArch64::CNTv8i8: case AArch64::CNTv16i8:
       Annotations = genRdOneOperandAnnotation(MI, "bit");
       break;
     //=== BRANCH ===//
@@ -826,6 +835,9 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::LDURXi: case AArch64::LDURDi:
       Annotations = genRtAddr(MI, "loa", DOUB, UNUSED, true, /*isScaled=*/false, /*isStore=*/false, /*isPair=*/false, /*isIndexed*/false);
       break;
+    case AArch64::LDURQi:
+      Annotations = genRtAddr(MI, "loa", QUAD, UNUSED, true, /*isScaled=*/false, /*isStore=*/false, /*isPair=*/false, /*isIndexed*/false);
+      break;
     case AArch64::LDRBBpre: case AArch64::LDRBBpost: case AArch64::LDRBpre: case AArch64::LDRBpost:
       Annotations = genRtAddr(MI, "loa", BYTE, UNUSED, true, /*isScaled=*/true, /*isStore=*/false, /*isPair=*/false, /*isIndexed*/true);
       break;
@@ -840,6 +852,13 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
       break;
     case AArch64::LDRQpre: case AArch64::LDRQpost:
       Annotations = genRtAddr(MI, "loa", QUAD, UNUSED, true, /*isScaled=*/true, /*isStore=*/false, /*isPair=*/false, /*isIndexed*/true);
+      break;
+    // TODO: CHECK UNTIL PAIR, load signed byte in W?
+    case AArch64::LDRSBWpost: case AArch64::LDRSBWpre:
+      Annotations = genRtAddr(MI, "loa", BYTE, WORD, true, /*isScaled=*/true, /*isStore=*/false, /*isPair=*/false, /*isIndexed*/true);
+      break;
+    case AArch64::LDRSHXpost: case AArch64::LDRSHXpre:
+      Annotations = genRtAddr(MI, "loa", HALF, DOUB, true, /*isScaled=*/true, /*isStore=*/false, /*isPair=*/false, /*isIndexed*/true);
       break;
     // Pairs
     case AArch64::LDPWi: case AArch64::LDPSWi: case AArch64::LDPSi:
@@ -906,9 +925,15 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::STRXroX: case AArch64::STRDroX:
       Annotations = genRtAddr(MI, "sto", DOUB, DOUB, true, /*isScaled=*/false, /*isStore=*/true, /*isPair=*/false, /*isIndexed*/false);
       break;
+    case AArch64::STRQroX:
+      Annotations = genRtAddr(MI, "sto", QUAD, DOUB, true, /*isScaled=*/false, /*isStore=*/true, /*isPair=*/false, /*isIndexed*/false);
+      break;
     // Immediate offsets
     case AArch64::STRBBui:
       Annotations = genRtAddr(MI, "sto", BYTE, UNUSED, true, /*isScaled=*/true, /*isStore=*/true, /*isPair=*/false, /*isIndexed*/false);
+      break;
+    case AArch64::STRHHui:
+      Annotations = genRtAddr(MI, "sto", HALF, UNUSED, true, /*isScaled=*/true, /*isStore=*/true, /*isPair=*/false, /*isIndexed*/false);
       break;
     case AArch64::STRWui: case AArch64::STRSui:
       Annotations = genRtAddr(MI, "sto", WORD, UNUSED, true, /*isScaled=*/true, /*isStore=*/true, /*isPair=*/false, /*isIndexed*/false);
@@ -919,11 +944,20 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::STRQui:
       Annotations = genRtAddr(MI, "sto", QUAD, UNUSED, true, /*isScaled=*/true, /*isStore=*/true, /*isPair=*/false, /*isIndexed*/false);
       break;
+    case AArch64::STURBBi:
+      Annotations = genRtAddr(MI, "sto", BYTE, UNUSED, true, /*isScaled=*/false, /*isStore=*/true, /*isPair=*/false, /*isIndexed*/false);
+      break;
+    case AArch64::STURHHi:
+      Annotations = genRtAddr(MI, "sto", HALF, UNUSED, true, /*isScaled=*/false, /*isStore=*/true, /*isPair=*/false, /*isIndexed*/false);
+      break;
     case AArch64::STURWi:
       Annotations = genRtAddr(MI, "sto", WORD, UNUSED, true, /*isScaled=*/false, /*isStore=*/true, /*isPair=*/false, /*isIndexed*/false);
       break;
     case AArch64::STURXi: case AArch64::STURDi:
       Annotations = genRtAddr(MI, "sto", DOUB, UNUSED, true, /*isScaled=*/false, /*isStore=*/true, /*isPair=*/false, /*isIndexed*/false);
+      break;
+    case AArch64::STURQi:
+      Annotations = genRtAddr(MI, "sto", QUAD, UNUSED, true, /*isScaled=*/false, /*isStore=*/true, /*isPair=*/false, /*isIndexed*/false);
       break;
     case AArch64::STRBBpre: case AArch64::STRBBpost: case AArch64::STRBpre: case AArch64::STRBpost:
       Annotations = genRtAddr(MI, "sto", BYTE, UNUSED, true, /*isScaled=*/true, /*isStore=*/true, /*isPair=*/false, /*isIndexed*/true);
@@ -981,14 +1015,20 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
         Annotations.push_back("SVC\n");
       }
       break;
+    case AArch64::CLREX:           // Cancel exclusive access
     case AArch64::CFI_INSTRUCTION:
     case AArch64::DBG_VALUE:
     case AArch64::DBG_VALUE_LIST:
     case AArch64::IMPLICIT_DEF:
     case AArch64::JUMP_TABLE_DEBUG_INFO:
     case AArch64::JumpTableDest16:
+    case AArch64::JumpTableDest8:
     case AArch64::KILL:
     case AArch64::HBNG_ATOM_LABEL:
+      break;
+    default:
+      Annotations.push_back(Unsupported + "\n");
+      LLVM_DEBUG(dbgs() << Unsupported << "\n");
       break;
   }
   return Annotations;
