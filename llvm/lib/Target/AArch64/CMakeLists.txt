@@ -99,6 +99,7 @@ add_llvm_target(AArch64CodeGen
   AArch64PrologueEpilogue.cpp
 
   AArch64HBNGAnnotate.cpp
+  AArch64HBNGSendToSTM.cpp
 
   DEPENDS
   intrinsics_gen

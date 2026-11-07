@@ -290,6 +290,8 @@ LLVMInitializeAArch64Target() {
   initializeSVEShuffleOptsPass(PR);
   // HBNG: Initialize annotation pass
   initializeAArch64HBNGAnnotatePass(PR);
+  // HBNG: Initialize STM pass
+  initializeAArch64HBNGSendToSTMPass(PR);
 }
 
 bool AArch64TargetMachine::isGlobalISelOptNone() const {
@@ -973,6 +975,10 @@ void AArch64PassConfig::addPreEmitPass2() {
   addPass(createUnpackMachineBundlesLegacy(nullptr));
   // HBNG: Add the pass at the end of the emission, after all optimizations
   addPass(createAArch64HBNGAnnotatePass());
+  // HBNG: Once the annotations have been generated for all instructions, add
+  //       store instructions to send base register values down the STM. Placed
+  //       here to avoid generating annotations for them.
+  addPass(createAArch64HBNGSendToSTMPass());
 }
 
 bool AArch64PassConfig::addRegAssignAndRewriteOptimized() {
