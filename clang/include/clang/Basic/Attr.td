@@ -5431,6 +5431,13 @@ def NoTrivialAutoVarInit: InheritableAttr {
   let SimpleHandler = 1;
 }
 
+// HBNG - Disable instrumentation
+def HBNGNoInstr : InheritableAttr {
+  let Spellings = [GNU<"hbng_no_instr">];
+  let Subjects = SubjectList<[Function]>;
+  let Documentation = [Undocumented];
+}
+
 def Atomic : StmtAttr {
   let Spellings = [Clang<"atomic">];
   let Args = [VariadicEnumArgument<"AtomicOptions", "ConsumedOption",

@@ -3180,6 +3180,9 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   if (CodeGenOpts.DisableOutlining || D->hasAttr<NoOutlineAttr>())
     B.addAttribute(llvm::Attribute::NoOutline);
 
+  // HBNG - no instrumentation attribute
+  if (D->hasAttr<clang::HBNGNoInstrAttr>()) B.addAttribute("hbng_no_instr");
+
   F->addFnAttrs(B);
 
   llvm::MaybeAlign ExplicitAlignment;
