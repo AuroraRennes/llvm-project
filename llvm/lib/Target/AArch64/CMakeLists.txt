@@ -98,6 +98,8 @@ add_llvm_target(AArch64CodeGen
   AArch64SIMDInstrOpt.cpp
   AArch64PrologueEpilogue.cpp
 
+  AArch64HBNGAnnotate.cpp
+
   DEPENDS
   intrinsics_gen
 

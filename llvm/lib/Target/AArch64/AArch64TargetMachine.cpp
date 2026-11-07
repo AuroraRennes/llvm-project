@@ -288,6 +288,8 @@ LLVMInitializeAArch64Target() {
   initializeAArch64CondBrTuningPass(PR);
   initializeAArch64Arm64ECCallLoweringPass(PR);
   initializeSVEShuffleOptsPass(PR);
+  // HBNG: Initialize annotation pass
+  initializeAArch64HBNGAnnotatePass(PR);
 }
 
 bool AArch64TargetMachine::isGlobalISelOptNone() const {
@@ -969,6 +971,8 @@ void AArch64PassConfig::addPreEmitPass2() {
   // SVE bundles move prefixes with destructive operations. BLR_RVMARKER pseudo
   // instructions are lowered to bundles as well.
   addPass(createUnpackMachineBundlesLegacy(nullptr));
+  // HBNG: Add the pass at the end of the emission, after all optimizations
+  addPass(createAArch64HBNGAnnotatePass());
 }
 
 bool AArch64PassConfig::addRegAssignAndRewriteOptimized() {

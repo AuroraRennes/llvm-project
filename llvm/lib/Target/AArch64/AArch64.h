@@ -79,6 +79,8 @@ FunctionPass *createSMEPeepholeOptPass();
 FunctionPass *createMachineSMEABIPass(CodeGenOptLevel);
 FunctionPass *createAArch64SRLTDefineSuperRegsLegacyPass();
 ModulePass *createSVEIntrinsicOptsPass();
+// HBNG: Register annotation pass
+FunctionPass *createAArch64HBNGAnnotatePass();
 Pass *createSVEShuffleOptsPass();
 InstructionSelector *
 createAArch64InstructionSelector(const AArch64TargetMachine &,
@@ -205,6 +207,8 @@ void initializeAArch64SRLTDefineSuperRegsLegacyPass(PassRegistry &);
 void initializeSVEIntrinsicOptsPass(PassRegistry &);
 void initializeSVEShuffleOptsPass(PassRegistry &);
 void initializeAArch64Arm64ECCallLoweringPass(PassRegistry &);
+// HBNG: Initialize annotation pass
+void initializeAArch64HBNGAnnotatePass(PassRegistry &);
 
 class SVEShuffleOptsPass : public PassInfoMixin<SVEShuffleOptsPass> {
   const AArch64TargetMachine &TM;

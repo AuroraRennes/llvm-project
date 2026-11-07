@@ -46,6 +46,16 @@ enum class SignReturnAddress {
   All,
 };
 
+// HBNG - Annotation struct holding:
+//      (1) BBSymbol:      the symbol of the basic block
+//      (2) BBAnnotSymbol: the corresponding symbol in the annotations
+//      (3) Annotations:   the annotations themselves
+struct HBNGAnnotationInfo {
+  MCSymbol *BBSymbol;
+  MCSymbol *BBAnnotSymbol;
+  std::vector<std::string> Annotations;
+};
+
 /// AArch64FunctionInfo - This class is derived from MachineFunctionInfo and
 /// contains private AArch64-specific information for each MachineFunction.
 class AArch64FunctionInfo final : public MachineFunctionInfo {
@@ -606,6 +616,10 @@ public:
   bool hasStackProbing() const { return StackProbeSize != 0; }
 
   int64_t getStackProbeSize() const { return StackProbeSize; }
+
+    // HBNG - Annotation information storage
+  std::vector<HBNGAnnotationInfo> BBAnnotationInfos;
+  mutable unsigned BBTIndex = 0;
 
 private:
   // Hold the lists of LOHs.

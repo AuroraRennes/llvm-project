@@ -100,6 +100,10 @@ class AArch64AsmPrinter : public AsmPrinter {
   bool ShouldEmitWeakSwiftAsyncExtendedFramePointerFlags = false;
   bool PtrauthInitFini = false;
   bool PtrauthInitFiniAddressDisc = false;
+
+  // HBNG - BBT and annotations main storage, used by at section emission and
+  // obtained by combining per-function tables
+  std::vector<HBNGAnnotationInfo> HBNGAnnotationInfos;
 #ifndef NDEBUG
   unsigned InstsEmitted;
 #endif
@@ -353,6 +357,12 @@ private:
 
   void emitFunctionBodyEnd() override;
   void emitGlobalAlias(const Module &M, const GlobalAlias &GA) override;
+
+  // HBNG emission to dedicated sections
+  void emitHBNGAnnotationSection(Module &M);
+  void emitHBNGBasicBlockTableSection();
+  void emitFunctionBodyStart() override;
+  void emitBasicBlockStart(const MachineBasicBlock &MBB) override;
 
   MCSymbol *GetCPISymbol(unsigned CPID) const override;
   void emitEndOfAsmFile(Module &M) override;
@@ -1132,6 +1142,11 @@ void AArch64AsmPrinter::emitEndOfAsmFile(Module &M) {
       }
     }
   }
+
+  // HBNG: Emit the annotation section
+  emitHBNGAnnotationSection(M);
+  // HBNG: Emit the basic block table section
+  emitHBNGBasicBlockTableSection();
 }
 
 void AArch64AsmPrinter::emitLOHs() {
@@ -1153,6 +1168,65 @@ void AArch64AsmPrinter::emitFunctionBodyEnd() {
   if (!AArch64FI->getLOHRelated().empty())
     emitLOHs();
 }
+
+// FIXME: Move to a subclass
+
+void AArch64AsmPrinter::emitHBNGAnnotationSection(Module &M) {
+  // HBNG: Switch to the .hbngannot section
+  if (!HBNGAnnotationInfos.empty()) {
+    OutStreamer->switchSection(OutContext.getObjectFileInfo()->getHBNGAnnotationSection());
+    for (auto &AnnotationInfo : HBNGAnnotationInfos) {
+      OutStreamer->emitLabel(AnnotationInfo.BBAnnotSymbol);
+      for (std::string Annotation : AnnotationInfo.Annotations) {
+        OutStreamer->emitBytes(Annotation);
+      }
+    }
+  }
+}
+
+void AArch64AsmPrinter::emitHBNGBasicBlockTableSection() {
+  // HBNG: Switch to the .hbngbbt section
+  if (!HBNGAnnotationInfos.empty()) {
+    OutStreamer->switchSection(OutContext.getObjectFileInfo()->getHBNGBasicBlockTableSection());
+     for (auto &AnnotationInfo : HBNGAnnotationInfos) {
+      MCSymbol *Sym = AnnotationInfo.BBSymbol;
+      MCSymbol *AnnotSym = AnnotationInfo.BBAnnotSymbol;
+      LLVM_DEBUG(dbgs() << "Symbol: " << Sym->getName() << " is defined: " << Sym->isDefined() << "\n");
+      LLVM_DEBUG(dbgs() << "Annotation Symbol: " << AnnotSym->getName() << " is defined: " << AnnotSym->isDefined() << "\n");
+      OutStreamer->emitValue(MCSymbolRefExpr::create(Sym, OutContext), 8);
+      OutStreamer->emitValue(MCSymbolRefExpr::create(AnnotSym, OutContext), 8);
+    }
+  }
+}
+
+
+void AArch64AsmPrinter::emitFunctionBodyStart() {
+  AsmPrinter::emitFunctionBodyStart();
+
+  // HBNG: Add basic block table to the global one
+  const auto *FI = MF->getInfo<AArch64FunctionInfo>();
+  if (!FI->BBAnnotationInfos.empty()){
+    HBNGAnnotationInfos.insert(
+      HBNGAnnotationInfos.end(),
+      FI->BBAnnotationInfos.begin(),
+      FI->BBAnnotationInfos.end()
+    );
+  }
+}
+
+void AArch64AsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
+  // HBNG: Get the corresponding custom label and emit it, update the bbtindex
+  auto *FI =  MF->getInfo<AArch64FunctionInfo>();
+  std::vector<HBNGAnnotationInfo> BBAnnotInfos = FI->BBAnnotationInfos;
+  if (!BBAnnotInfos.empty()) {
+    MCSymbol *BBSym = BBAnnotInfos[FI->BBTIndex].BBSymbol;
+    ++FI->BBTIndex;
+    OutStreamer->emitLabel(BBSym);
+    AsmPrinter::emitBasicBlockStart(MBB);
+  }
+}
+
+
 
 /// GetCPISymbol - Return the symbol for the specified constant pool entry.
 MCSymbol *AArch64AsmPrinter::GetCPISymbol(unsigned CPID) const {
@@ -3906,6 +3980,15 @@ void AArch64AsmPrinter::emitInstruction(const MachineInstr *MI) {
     TS->emitARM64WinCFISavePReg(MI->getOperand(0).getImm(),
                                 MI->getOperand(1).getImm());
     return;
+
+  // HBNG: Emit a corresponding label when reaching a pseudo instruction
+  case AArch64::HBNG_ATOM_LABEL: {
+      const auto *FI = MF->getInfo<AArch64FunctionInfo>();
+      MCSymbol *Sym = FI->BBAnnotationInfos[FI->BBTIndex].BBSymbol;
+      OutStreamer->emitLabel(Sym);
+      ++FI->BBTIndex;
+      return;
+    }
 
   case AArch64::BLR:
   case AArch64::BR: {

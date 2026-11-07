@@ -11987,6 +11987,13 @@ let Predicates = [HasTEV] in {
   defm TEXIT : TEXIT<"texit">;
 }
 
+//===-----------------------------------------------------===//
+// HBNG Label info
+//===-----------------------------------------------------===//
+
+let isPseudo = 1, hasSideEffects = 0 in
+def HBNG_ATOM_LABEL : Pseudo<(outs), (ins), []>, Sched<[]>;
+
 include "AArch64InstrAtomics.td"
 include "AArch64SVEInstrInfo.td"
 include "AArch64SMEInstrInfo.td"
