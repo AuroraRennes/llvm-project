@@ -1,0 +1,21 @@
+#!/bin/bash
+
+BUILD_DIR=build-aarch64
+
+cmake -G Ninja \
+  -S llvm \
+  -B ${BUILD_DIR} \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_SYSTEM_NAME=Linux \
+  -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+  -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc \
+  -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+  -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER \
+  -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY \
+  -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY \
+  -DLLVM_ENABLE_PROJECTS="clang;lld" \
+  -DLLVM_TARGETS_TO_BUILD="AArch64" \
+  -DLLVM_DEFAULT_TARGET_TRIPLE=aarch64-linux-gnu \
+  -DLLVM_ENABLE_LLD=OFF \
+
+ninja -C ${BUILD_DIR}
