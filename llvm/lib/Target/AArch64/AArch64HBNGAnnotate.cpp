@@ -63,16 +63,15 @@ public:
 
 private:
     void printStrOperand(MachineOperand &MO, raw_string_ostream &OS);
-    void printCondition(AArch64CC::CondCode CC, StringRef Op, raw_string_ostream &OS);
     std::vector<std::string> genRdOneOperandAnnotation(MachineInstr &MI, StringRef Op);
-    std::vector<std::string> genRdTwoOperandsAnnotation(MachineInstr &MI, StringRef Op, bool Carry, bool Flags);
-    std::vector<std::string> genRdThreeOperandsAnnotation(MachineInstr &MI, StringRef Op, bool Carry, bool Flags);
+    std::vector<std::string> genRdTwoOperandsAnnotation(MachineInstr &MI, StringRef Op);
+    std::vector<std::string> genRdThreeOperandsAnnotation(MachineInstr &MI, StringRef Op);
     std::vector<std::string> genRdImmAnnotation(MachineInstr &MI, StringRef Op, bool Sticky);
     std::vector<std::string> genRdPCAnnotation(MachineInstr &MI, StringRef Op, bool Page);
-    std::vector<std::string> genPCOffsetCondAnnotation(MachineInstr &MI, StringRef Op, bool Cond, bool Link);
-    std::vector<std::string> genRdTwoOperandsCondAnnotation(MachineInstr &MI, StringRef Op, bool Cond, bool Flags);
+    std::vector<std::string> genLinkAnnotation();
     std::vector<std::string> genMemAnnotation(MachineInstr &MI, const HBNGMemAccess &A);
     std::vector<std::string> genZero(MachineInstr &MI);
+    bool writesZeroReg(MachineInstr &MI);
 };
 
 char AArch64HBNGAnnotate::ID = 0;
@@ -86,34 +85,6 @@ INITIALIZE_PASS(AArch64HBNGAnnotate, DEBUG_TYPE, "HardBlare-NG annotation pass",
 //===----------------------------------------------------------------------===//
 // Helper functions
 
-enum NZCVFlags {
-  N = 1 << 3,  // Negative
-  Z = 1 << 2,  // Zero
-  C = 1 << 1,  // Carry
-  V = 1 << 0   // Overflow
-};
-
-static unsigned getNZCVFlagsUsed(AArch64CC::CondCode CC) {
-  switch (CC) {
-      case AArch64CC::EQ: return Z;                     // Zero
-      case AArch64CC::NE: return Z;                     // Zero
-      case AArch64CC::HS: return C;                     // Carry
-      case AArch64CC::LO: return C;                     // Carry
-      case AArch64CC::MI: return N;                     // Negative
-      case AArch64CC::PL: return N;                     // Negative
-      case AArch64CC::VS: return V;                     // Overflow
-      case AArch64CC::VC: return V;                     // Overflow
-      case AArch64CC::HI: return C | Z;                 // Carry & Zero
-      case AArch64CC::LS: return C | Z;                 // Carry & Zero
-      case AArch64CC::GE: return N | V;                 // Negative & Overflow
-      case AArch64CC::LT: return N | V;                 // Negative & Overflow
-      case AArch64CC::GT: return N | V | Z;             // Negative, Overflow & Zero
-      case AArch64CC::LE: return N | V | Z;             // Negative, Overflow & Zero
-      case AArch64CC::AL: case AArch64CC::NV: return 0; // Always / Never (no flags)
-      default: return 0; // Unknown condition
-  }
-}
-
 static bool containsSVC(MachineInstr &MI) {
   bool IsSVC = false;
   if (MI.isInlineAsm()) {
@@ -123,14 +94,6 @@ static bool containsSVC(MachineInstr &MI) {
     }
   }
   return IsSVC;
-}
-
-void AArch64HBNGAnnotate::printCondition(AArch64CC::CondCode CC, StringRef Op, raw_string_ostream &OS) {
-  unsigned CCBitMask = getNZCVFlagsUsed(CC);
-  if (CCBitMask & N) OS << " " << Op << " N";
-  if (CCBitMask & Z) OS << " " << Op << " Z";
-  if (CCBitMask & C) OS << " " << Op << " C";
-  if (CCBitMask & V) OS << " " << Op << " V";
 }
 
 void AArch64HBNGAnnotate::printStrOperand(MachineOperand &MO, raw_string_ostream &OS) {
@@ -146,6 +109,21 @@ void AArch64HBNGAnnotate::printStrOperand(MachineOperand &MO, raw_string_ostream
 
 //===----------------------------------------------------------------------===//
 // Specific annotation functions
+//
+// The condition flags carry no tag. A comparison reaches the data only through
+// a branch or a conditional select/set, which are implicit flows and out of
+// scope of the policy: a value computed with cset is clean, and a csel takes
+// the tags of both data operands but not of the condition. So flag-setting
+// instructions annotate only their destination register (nothing for
+// cmp/cmn/tst/fcmp/ccmp), the carry of adc/sbc is not propagated, and branches
+// carry no tag into PC.
+
+// A write to WZR/XZR (cmp, cmn, tst) has no effect on the tags.
+bool AArch64HBNGAnnotate::writesZeroReg(MachineInstr &MI) {
+  MachineOperand &Rd = MI.getOperand(0);
+  return Rd.isReg() && Rd.isDef() &&
+         (Rd.getReg() == AArch64::WZR || Rd.getReg() == AArch64::XZR);
+}
 
 std::vector<std::string> AArch64HBNGAnnotate::genZero(MachineInstr &MI) {
   std::string Result;
@@ -171,52 +149,26 @@ std::vector<std::string> AArch64HBNGAnnotate::genRdOneOperandAnnotation(MachineI
   return {Result + "\n"};
 }
 
-std::vector<std::string> AArch64HBNGAnnotate::genRdTwoOperandsAnnotation(MachineInstr &MI, StringRef Op, bool Carry, bool Flags) {
-  // Annotations vector
-  std::vector<std::string> Annotations = {};
-  // Use a raw_string_ostream to format the string.
+std::vector<std::string> AArch64HBNGAnnotate::genRdTwoOperandsAnnotation(MachineInstr &MI, StringRef Op) {
+  if (writesZeroReg(MI))
+    return {};
   std::string Result;
   raw_string_ostream OS(Result);
-
   printStrOperand(MI.getOperand(0), OS);
   OS << " <- ";
   printStrOperand(MI.getOperand(1), OS);
   OS << " " << Op << " ";
   printStrOperand(MI.getOperand(2), OS);
-
-  // Check if the tag of the Carry or Flags needs to be propagated
-  if (Carry) {
-    OS << " " << Op << " C";
-  }
-
   LLVM_DEBUG(dbgs() << Result << "\n");
-  Annotations.push_back(Result + "\n");
-
-  if (Flags) {
-    std::string Result2;
-    raw_string_ostream OS2(Result2);
-    OS2 << "NZCV <- ";
-    printStrOperand(MI.getOperand(1), OS2);
-    OS2 << " " << Op << " ";
-    printStrOperand(MI.getOperand(2), OS2);
-    if (Carry) {
-      OS2 << " " << Op << " C";
-    }
-    LLVM_DEBUG(dbgs() << Result2 << "\n");
-    Annotations.push_back(Result2 + "\n");
-  }
-
-  return Annotations;
+  return {Result + "\n"};
 }
 
 
-std::vector<std::string> AArch64HBNGAnnotate::genRdThreeOperandsAnnotation(MachineInstr &MI, StringRef Op, bool Carry, bool Flags) {
-  // Annotations vector
-  std::vector<std::string> Annotations = {};
-  // Use a raw_string_ostream to format the string.
+std::vector<std::string> AArch64HBNGAnnotate::genRdThreeOperandsAnnotation(MachineInstr &MI, StringRef Op) {
+  if (writesZeroReg(MI))
+    return {};
   std::string Result;
   raw_string_ostream OS(Result);
-
   printStrOperand(MI.getOperand(0), OS);
   OS << " <- ";
   printStrOperand(MI.getOperand(1), OS);
@@ -224,56 +176,7 @@ std::vector<std::string> AArch64HBNGAnnotate::genRdThreeOperandsAnnotation(Machi
   printStrOperand(MI.getOperand(2), OS);
   OS << " " << Op << " ";
   printStrOperand(MI.getOperand(3), OS);
-
-  // Check if the tag of the Carry or Flags needs to be propagated
-  if (Carry) {
-    OS << " " << Op << " C";
-  }
-
   LLVM_DEBUG(dbgs() << Result << "\n");
-  Annotations.push_back(Result + "\n");
-
-  if (Flags) {
-    std::string Result2;
-    raw_string_ostream OS2(Result2);
-    OS2 << "NZCV <- ";
-    printStrOperand(MI.getOperand(1), OS2);
-    OS2 << " " << Op << " ";
-    printStrOperand(MI.getOperand(2), OS2);
-    OS2 << " " << Op << " ";
-    printStrOperand(MI.getOperand(3), OS2);
-    if (Carry) {
-      OS2 << " " << Op << " C";
-    }
-    LLVM_DEBUG(dbgs() << Result2 << "\n");
-    Annotations.push_back(Result2 + "\n");
-  }
-
-  return Annotations;
-}
-
-std::vector<std::string> AArch64HBNGAnnotate::genRdTwoOperandsCondAnnotation(MachineInstr &MI, StringRef Op, bool Cond, bool Flags) {
-  // Annotations vector
-  std::vector<std::string> Annotations = {};
-  // Use a raw_string_ostream to format the string.
-  std::string Result;
-  raw_string_ostream OS(Result);
-
-  // TODO: Check indexes
-  if (Flags) {
-    OS << "NZCV <- ";
-  }
-  else {
-    printStrOperand(MI.getOperand(0), OS);
-    OS << " <- ";
-  }
-  printStrOperand(MI.getOperand(1), OS);
-  OS << " " << Op << " ";
-  printStrOperand(MI.getOperand(2), OS);
-  if (Cond) {
-    AArch64CC::CondCode CC = static_cast<AArch64CC::CondCode>(MI.getOperand(3).getImm());
-    printCondition(CC, Op, OS);
-  }
   return {Result + "\n"};
 }
 
@@ -316,44 +219,9 @@ std::vector<std::string> AArch64HBNGAnnotate::genRdPCAnnotation(MachineInstr &MI
   return {Result + "\n"};
 }
 
-std::vector<std::string> AArch64HBNGAnnotate::genPCOffsetCondAnnotation(MachineInstr &MI, StringRef Op, bool Cond, bool Link) {
-  std::vector<std::string> Annotations = {};
-
-  int OffsetIndex = Cond ? 1 : 0;
-
-  if (Link) {
-    std::string ResultLR;
-    raw_string_ostream OSLR(ResultLR);
-    OSLR << "LR <- PC " << Op << " LR " << Op << " ";
-    printStrOperand(MI.getOperand(OffsetIndex), OSLR);
-    LLVM_DEBUG(dbgs() << ResultLR << "\n");
-    Annotations.push_back(ResultLR + "\n");
-  }
-
-  // Use a raw_string_ostream to format the string.
-  std::string ResultPC;
-  raw_string_ostream OSPC(ResultPC);
-
-  // PC<- imm + PC + [<PC> + imm]
-  OSPC << "PC <- PC " << Op << " ";
-  printStrOperand(MI.getOperand(OffsetIndex), OSPC);
-  if (Cond) {
-    AArch64CC::CondCode CC = static_cast<AArch64CC::CondCode>(MI.getOperand(0).getImm());
-    printCondition(CC, Op, OSPC);
-  }
-
-#ifdef false
-  // TODO: Note that the ImmIndex now is not defined yet and refers to another basic block
-  // While it might not be needed (tagging code memory is useful for self-modifying code)
-  // it should be happening after the branch resolution (in the MCInst layer) if needed
-  OSPC << "[<PC> + ";
-  printStrOperand(MI.getOperand(ImmIndex), OSPC);
-  OSPC << "] " << Op << " ";
-#endif
-
-  LLVM_DEBUG(dbgs() << ResultPC << "\n");
-  Annotations.push_back(ResultPC + "\n");
-  return Annotations;
+// A call writes the return address, a constant, into LR.
+std::vector<std::string> AArch64HBNGAnnotate::genLinkAnnotation() {
+  return {"LR <- Imm(0)\n"};
 }
 
 // Annotations of a load or store, in the form (one line per data register,
@@ -488,29 +356,29 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::FADDSrr: case AArch64::FADDDrr:
     case AArch64::FADDv2f32: case AArch64::FADDv2f64:
     case AArch64::FADDv4f16: case AArch64::FADDv4f32: case AArch64::FADDv8f16:
-      Annotations = genRdTwoOperandsAnnotation(MI, "add", /*Carry=*/false, /*Flags=*/false);
+      Annotations = genRdTwoOperandsAnnotation(MI, "add");
       break;
     case AArch64::SUBXrr: case AArch64::SUBXrx: case AArch64::SUBXrs:
     case AArch64::SUBWrr: case AArch64::SUBWrx: case AArch64::SUBWrs:
     case AArch64::SUBv2i64:
     case AArch64::FSUBDrr: case AArch64::FSUBSrr: case AArch64::FSUBv4f32:
-      Annotations = genRdTwoOperandsAnnotation(MI, "sub", /*Carry=*/false, /*Flags=*/false);
+      Annotations = genRdTwoOperandsAnnotation(MI, "sub");
       break;
     case AArch64::ADDSXrr: case AArch64::ADDSXrx: case AArch64::ADDSXrs:
     case AArch64::ADDSWrr: case AArch64::ADDSWrx: case AArch64::ADDSWrs:
-      Annotations = genRdTwoOperandsAnnotation(MI, "add", /*Carry=*/false, /*Flags=*/true);
+      Annotations = genRdTwoOperandsAnnotation(MI, "add");
       break;
     case AArch64::SUBSXrr: case AArch64::SUBSXrx: case AArch64::SUBSXrs:
     case AArch64::SUBSWrr: case AArch64::SUBSWrx: case AArch64::SUBSWrs:
-      Annotations = genRdTwoOperandsAnnotation(MI, "sub", /*Carry=*/false, /*Flags=*/true);
+      Annotations = genRdTwoOperandsAnnotation(MI, "sub");
       break;
     case AArch64::ADCSXr: case AArch64::ADCSWr:
     case AArch64::SBCSXr: case AArch64::SBCSWr:
-      Annotations = genRdTwoOperandsAnnotation(MI, "ari", /*Carry=*/true, /*Flags=*/true);
+      Annotations = genRdTwoOperandsAnnotation(MI, "ari");
       break;
     case AArch64::ADCXr: case AArch64::ADCWr:
     case AArch64::SBCXr: case AArch64::SBCWr:
-      Annotations = genRdTwoOperandsAnnotation(MI, "ari", /*Carry=*/true, /*Flags=*/false);
+      Annotations = genRdTwoOperandsAnnotation(MI, "ari");
       break;
     case AArch64::UMULHrr: case AArch64::SMULHrr:
     case AArch64::MULv2i32: case AArch64::MULv4i32:
@@ -519,24 +387,23 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::FMULv2f32: case AArch64::FMULv2f64:
     case AArch64::FMULv4f16: case AArch64::FMULv4f32:
     case AArch64::FMULv8f16:
-      Annotations = genRdTwoOperandsAnnotation(MI, "ari", false, false);
+      Annotations = genRdTwoOperandsAnnotation(MI, "ari");
       break;
     // Register and Immediate
     case AArch64::ADDXri: case AArch64::ADDWri:
-      Annotations = genRdTwoOperandsAnnotation(MI, "add", /*Carry=*/true, /*Flags=*/true);
+      Annotations = genRdTwoOperandsAnnotation(MI, "add");
       break;
     case AArch64::SUBXri: case AArch64::SUBWri:
-      Annotations = genRdTwoOperandsAnnotation(MI, "sub", /*Carry=*/false, /*Flags=*/false);
+      Annotations = genRdTwoOperandsAnnotation(MI, "sub");
       break;
     case AArch64::ADDSXri: case AArch64::ADDSWri:
     case AArch64::SUBSXri: case AArch64::SUBSWri:
-    case AArch64::FCMPDri: case AArch64::FCMPSri:
-      Annotations = genRdTwoOperandsAnnotation(MI, "ari", /*Carry=*/false, /*Flags=*/true);
+      Annotations = genRdTwoOperandsAnnotation(MI, "ari");
       break;
     case AArch64::UDIVWr: case AArch64::UDIVXr:
     case AArch64::SDIVWr: case AArch64::SDIVXr:
     case AArch64::FDIVSrr: case AArch64::FDIVDrr:
-      Annotations = genRdTwoOperandsAnnotation(MI, "ari", false, false);
+      Annotations = genRdTwoOperandsAnnotation(MI, "ari");
       break;
     // Three registers
     case AArch64::MADDWrrr: case AArch64::MADDXrrr:
@@ -550,18 +417,16 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::FMLAv1i32_indexed: case AArch64::FMLAv1i64_indexed:
     case AArch64::FMULv1i32_indexed: case AArch64::FMULv1i64_indexed:
       // TODO: Check for the carry?
-      Annotations = genRdThreeOperandsAnnotation(MI, "ari", false, false);
+      Annotations = genRdThreeOperandsAnnotation(MI, "ari");
       break;
 
     //=== FP COMPARISONS ===//
-    case AArch64::FCMPDrr: case AArch64::FCMPSrr:
     case AArch64::FMAXNMSrr: case AArch64::FMAXNMDrr:
     case AArch64::FMINNMSrr: case AArch64::FMINNMDrr:
-    case AArch64::FCMPEDri: case AArch64::FCMPEDrr:
-      Annotations = genRdTwoOperandsAnnotation(MI, "cmp", false, true);
+      Annotations = genRdTwoOperandsAnnotation(MI, "cmp");
       break;
     case AArch64::FCMEQv2f32: case AArch64::FCMEQv2f64: case AArch64::FCMEQv4f32:
-      Annotations = genRdTwoOperandsAnnotation(MI, "cmp", false, false);
+      Annotations = genRdTwoOperandsAnnotation(MI, "cmp");
       break;
     case AArch64::UMAXVv4i32v:
       Annotations = genRdOneOperandAnnotation(MI, "cmp");
@@ -600,19 +465,19 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::EORWri: case AArch64::EORXri:
     case AArch64::ORRXri: case AArch64::ORRWri:
     case AArch64::ANDXri: case AArch64::ANDWri:
-      Annotations = genRdTwoOperandsAnnotation(MI, "log", /*Carry=*/false, /*Flags=*/false);
+      Annotations = genRdTwoOperandsAnnotation(MI, "log");
       break;
     case AArch64::ANDSXrr: case AArch64::ANDSXrs: case AArch64::ANDSWrr: case AArch64::ANDSWrs:
     case AArch64::BICSXrr: case AArch64::BICSXrs: case AArch64::BICSWrr: case AArch64::BICSWrs:
     case AArch64::ANDSXri: case AArch64::ANDSWri:
-      Annotations = genRdTwoOperandsAnnotation(MI, "log", /*Carry=*/false, /*Flags=*/true);
+      Annotations = genRdTwoOperandsAnnotation(MI, "log");
       break;
     //=== SHIFTS ===//
     case AArch64::ASRVWr: case AArch64::ASRVXr:
     case AArch64::LSRVWr: case AArch64::LSRVXr:
     case AArch64::LSLVWr: case AArch64::LSLVXr:
     case AArch64::USHLLv2i32_shift: case AArch64::USHLv2i64:
-      Annotations = genRdTwoOperandsAnnotation(MI, "shi", /*Carry=*/false, /*Flags=*/true);
+      Annotations = genRdTwoOperandsAnnotation(MI, "shi");
       break;
     //=== MOVES ===//
     // Partial move
@@ -645,7 +510,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::BFMWri: case AArch64::BFMXri:
     case AArch64::EXTRWrri: case AArch64::EXTRXrri:
     case AArch64::EXTv8i8: case AArch64::EXTv16i8:
-      Annotations = genRdThreeOperandsAnnotation(MI, "bit", false, false);
+      Annotations = genRdThreeOperandsAnnotation(MI, "bit");
       break;
     case AArch64::XTNv2i32: case AArch64::XTNv4i32:
       Annotations = genRdOneOperandAnnotation(MI, "bit");
@@ -656,12 +521,12 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::ZIP1v8i8: case AArch64::ZIP2v8i8:
     case AArch64::ZIP1v8i16: case AArch64::ZIP2v8i16:
     case AArch64::ZIP1v16i8: case AArch64::ZIP2v16i8:
-      Annotations = genRdTwoOperandsAnnotation(MI, "bit", false, false);
+      Annotations = genRdTwoOperandsAnnotation(MI, "bit");
       break;
     // Vector merges
     case AArch64::BIFv16i8: case AArch64::BIFv8i8: case AArch64::BITv16i8: case AArch64::BITv8i8:
     case AArch64::BSLv16i8: case AArch64::BSLv8i8:
-      Annotations = genRdTwoOperandsAnnotation(MI, "bit", false, false);
+      Annotations = genRdTwoOperandsAnnotation(MI, "bit");
       break;
     case AArch64::DUPi32: case AArch64::DUPi64:
       Annotations = genRdImmAnnotation(MI, "bit", false);
@@ -683,47 +548,36 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::CNTv8i8: case AArch64::CNTv16i8:
       Annotations = genRdOneOperandAnnotation(MI, "bit");
       break;
-    //=== BRANCH ===//
-    case AArch64::B: case AArch64::BR:
-    // Tail call returns, pseudo instructions that become - BR to a given register
+    //=== BRANCHES ===//
+    // No tag flows into PC (see "Specific annotation functions"); the block
+    // structure is given by the block table and the END annotations.
+    case AArch64::B: case AArch64::BR: case AArch64::Bcc: case AArch64::RET:
+    case AArch64::TBNZX: case AArch64::TBNZW: case AArch64::TBZW: case AArch64::TBZX:
+    case AArch64::CBZW: case AArch64::CBZX: case AArch64::CBNZW: case AArch64::CBNZX:
+    // Tail calls, pseudo instructions that become B/BR
     case AArch64::TCRETURNri: case AArch64::TCRETURNdi: case AArch64::TCRETURNriALL:
     case AArch64::TCRETURNrix16x17: case AArch64::TCRETURNrix17: case AArch64::TCRETURNrinotx16:
-      Annotations = genPCOffsetCondAnnotation(MI, "bra", /*Cond=*/false, /*Link=*/false);
       break;
-    case AArch64::Bcc:
-      Annotations = genPCOffsetCondAnnotation(MI, "bra", /*Cond=*/true, /*Link=*/false);
-      break;
-    //=== BRANCH&LINK ===//
-    case AArch64::BL:
-      Annotations = genPCOffsetCondAnnotation(MI, "lin", /*Cond=*/false, /*Link=*/true);
-      break;
-    case AArch64::BLR:
-      Annotations = genPCOffsetCondAnnotation(MI, "lin", /*Cond=*/false, /*Link=*/true);
-      break;
-    case AArch64::RET:
-      Annotations = genPCOffsetCondAnnotation(MI, "ret", /*Cond=*/false, /*Link=*/false);
+    case AArch64::BL: case AArch64::BLR:
+      Annotations = genLinkAnnotation();
       break;
 
     //=== CONDITIONAL OPERATIONS ===//
+    // Both data operands, not the condition.
     case AArch64::CSELWr: case AArch64::CSELXr: case AArch64::CSINCWr: case AArch64::CSINCXr:
     case AArch64::CSINVWr: case AArch64::CSINVXr: case AArch64::CSNEGWr: case AArch64::CSNEGXr:
-      Annotations = genRdTwoOperandsCondAnnotation(MI, "cse", true, false);
-      break;
     case AArch64::FCSELSrrr: case AArch64::FCSELDrrr:
-      Annotations = genRdThreeOperandsAnnotation(MI, "cse", false, false);
+      Annotations = genRdTwoOperandsAnnotation(MI, "cse");
       break;
 
+    //=== COMPARISONS ===//
+    // Write only the flags.
+    case AArch64::FCMPSrr: case AArch64::FCMPDrr: case AArch64::FCMPSri: case AArch64::FCMPDri:
+    case AArch64::FCMPESrr: case AArch64::FCMPEDrr: case AArch64::FCMPESri: case AArch64::FCMPEDri:
     case AArch64::CCMPWi: case AArch64::CCMPWr: case AArch64::CCMPXi: case AArch64::CCMPXr:
     case AArch64::CCMNWi: case AArch64::CCMNWr: case AArch64::CCMNXi: case AArch64::CCMNXr:
     case AArch64::FCCMPSrr: case AArch64::FCCMPDrr:
-      Annotations = genRdTwoOperandsCondAnnotation(MI, "cse", true, true);
-      break;
-
-    //=== CONSITIONAL BRANCHES ===//
-    case AArch64::TBNZX: case AArch64::TBNZW: case AArch64::TBZW: case AArch64::TBZX:
-    case AArch64::CBZW: case AArch64::CBZX: case AArch64::CBNZW: case AArch64::CBNZX:
-      // does NOT modify condition flags
-      Annotations = genPCOffsetCondAnnotation(MI, "cbr", false, false);
+    case AArch64::FCCMPESrr: case AArch64::FCCMPEDrr:
       break;
 
     // Ignore
