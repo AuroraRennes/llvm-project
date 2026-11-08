@@ -15,6 +15,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "MCTargetDesc/AArch64AddressingModes.h"
 #include "MCTargetDesc/AArch64MCTargetDesc.h"
@@ -131,6 +132,12 @@ bool AArch64HBNGSendToSTM::runOnMachineFunction(MachineFunction &MF) {
     auto &STI = MF.getSubtarget<AArch64Subtarget>();
     TII = STI.getInstrInfo();
     TRI = MF.getSubtarget().getRegisterInfo();
+
+    // The sends store through x18, which no other code may write.
+    if (!STI.isXRegisterReserved(18))
+        reportFatalUsageError("HBNG: x18 holds the STM address and must be "
+                              "reserved (-ffixed-x18), in function '" +
+                              MF.getName() + "'");
 
     bool Changed = false;
 

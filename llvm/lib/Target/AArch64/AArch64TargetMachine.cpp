@@ -235,6 +235,15 @@ static cl::opt<bool> EnableSVEShuffleOpt(
              "instructions like tbl or the bottom/top variants"),
     cl::init(true), cl::Hidden);
 
+// HBNG: the STM sends and the annotations, off by default. The sends store
+// through x18, so the code must be built with x18 reserved (-ffixed-x18).
+static cl::opt<bool>
+    EnableHBNG("hbng",
+               cl::desc("Enable the HardBlare-NG instrumentation: STM sends "
+                        "through x18 (requires -ffixed-x18), annotations "
+                        "and block table"),
+               cl::init(false), cl::Hidden);
+
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void
 LLVMInitializeAArch64Target() {
   // Register the target.
@@ -960,7 +969,8 @@ void AArch64PassConfig::addPostBBSections() {
   // HBNG: insert the stores that send base register values down the STM
   // before branch relaxation and jump-table compression, so that both measure
   // the code with the sends in it. The annotation pass, later, skips them.
-  addPass(createAArch64HBNGSendToSTMPass());
+  if (EnableHBNG)
+    addPass(createAArch64HBNGSendToSTMPass());
   // Relax conditional branch instructions if they're otherwise out of
   // range of their destination.
   if (BranchRelaxation)
@@ -978,7 +988,8 @@ void AArch64PassConfig::addPreEmitPass2() {
   // instructions are lowered to bundles as well.
   addPass(createUnpackMachineBundlesLegacy(nullptr));
   // HBNG: Add the pass at the end of the emission, after all optimizations
-  addPass(createAArch64HBNGAnnotatePass());
+  if (EnableHBNG)
+    addPass(createAArch64HBNGAnnotatePass());
 }
 
 bool AArch64PassConfig::addRegAssignAndRewriteOptimized() {

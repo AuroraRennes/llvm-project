@@ -3,15 +3,15 @@
 ; fit but not with their 10 sends: relaxation must turn the tbz into tbnz to the
 ; next block + b, and the result must assemble. The split after the tbnz must
 ; keep the next block's label.
-; RUN: llc -mtriple=aarch64-linux-musl -O2 -aarch64-tbz-offset-bits=5 < %s | FileCheck %s
-; RUN: llc -mtriple=aarch64-linux-musl -O2 -aarch64-tbz-offset-bits=5 -filetype=obj < %s -o /dev/null
+; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 -aarch64-tbz-offset-bits=5 < %s | FileCheck %s
+; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 -aarch64-tbz-offset-bits=5 -filetype=obj < %s -o /dev/null
 
 ; CHECK-LABEL: far:
 ; CHECK:       tbnz w1, #0, [[BODY:.LBB0_[0-9]+]]
 ; CHECK-NEXT:  HBNG_far_split_0:
 ; CHECK-NEXT:  b [[SKIP:.LBB0_[0-9]+]]
 ; CHECK:       [[BODY]]:
-; CHECK-COUNT-10: str x0, [x26]
+; CHECK-COUNT-10: str x0, [x18]
 ; CHECK:       [[SKIP]]:
 define void @far(ptr %p, i64 %x) {
 entry:

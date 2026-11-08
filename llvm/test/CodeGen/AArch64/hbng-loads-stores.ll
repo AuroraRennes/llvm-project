@@ -2,17 +2,17 @@
 ; registers, and the STM sends carry the address registers those annotations
 ; refer to (the base unless it is SP, then the register offset; once per data
 ; register).
-; RUN: llc -mtriple=aarch64-linux-musl -O2 < %s | FileCheck %s --check-prefix=SEND
-; RUN: llc -mtriple=aarch64-linux-musl -O2 < %s | FileCheck %s --check-prefix=ANNOT
+; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s --check-prefix=SEND
+; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s --check-prefix=ANNOT
 
 ; Store-exclusive: the base is the last operand, the status register is
 ; written with an untainted value, and the send comes after the instruction
 ; (see hbng-exclusive.ll).
 ; SEND-LABEL: excl_add:
-; SEND:       str x8, [x26]
+; SEND:       str x8, [x18]
 ; SEND-NEXT:  ldaxr x0, [x8]
 ; SEND:       stlxr w10, x9, [x8]
-; SEND-NEXT:  str x8, [x26]
+; SEND-NEXT:  str x8, [x18]
 ; ANNOT-LABEL: HBNG_excl_add_n_1_annot:
 ; ANNOT-NEXT:  .ascii "X0 <- [<X8> + Imm(0)]_64 loa X8\n"
 ; ANNOT-NEXT:  .ascii "X9 <- X0 add X1\n"
@@ -22,10 +22,10 @@
 ; Register offsets: shift by log2 of the access size; a W offset is sent as
 ; its X register, in one STP with the base.
 ; SEND-LABEL: reg_x:
-; SEND:       stp x1, x0, [x26]
+; SEND:       stp x1, x0, [x18]
 ; SEND-NEXT:  ldr x0, [x0, x1, lsl #3]
 ; SEND-LABEL: reg_w:
-; SEND:       stp x1, x0, [x26]
+; SEND:       stp x1, x0, [x18]
 ; SEND-NEXT:  ldr w0, [x0, w1, sxtw #2]
 ; ANNOT-LABEL: HBNG_reg_x_annot:
 ; ANNOT-NEXT:  .ascii "X0 <- [<X0> + <X1> uxtx 3]_64 loa X0 loa X1\n"
@@ -34,14 +34,14 @@
 
 ; Sign-extending byte load: one byte, immediate scaled by 1.
 ; SEND-LABEL: ldrsb_imm:
-; SEND:       str x0, [x26]
+; SEND:       str x0, [x18]
 ; SEND-NEXT:  ldrsb w0, [x0, #5]
 ; ANNOT-LABEL: HBNG_ldrsb_imm_annot:
 ; ANNOT-NEXT:  .ascii "W0 <- [<X0> + 1*Imm(5)]_8 loa X0 loa Imm(5)\n"
 
 ; Pair: the base is sent once per register; the second register is 8 bytes on.
 ; SEND-LABEL: pair:
-; SEND:       stp x0, x0, [x26]
+; SEND:       stp x0, x0, [x18]
 ; SEND-NEXT:  ldp x8, x9, [x0]
 ; ANNOT-LABEL: HBNG_pair_annot:
 ; ANNOT-NEXT:  .ascii "X8 <- [<X0> + 8*Imm(0)]_64 loa X0 loa Imm(0)\n"
@@ -49,9 +49,9 @@
 
 ; Post-indexed: the address is the base; the write-back adds the byte offset.
 ; SEND-LABEL: copy_post:
-; SEND:       str x1, [x26]
+; SEND:       str x1, [x18]
 ; SEND-NEXT:  ldr x8, [x1], #8
-; SEND:       str x0, [x26]
+; SEND:       str x0, [x18]
 ; SEND-NEXT:  str x8, [x0], #8
 ; ANNOT:       .ascii "X8 <- [<X1> + Imm(0)]_64 loa X1 loa Imm(8)\n"
 ; ANNOT-NEXT:  .ascii "X1 <- X1 loa Imm(8)\n"
@@ -60,9 +60,9 @@
 
 ; 128-bit post-indexed load: the base is sent, not the loaded Q register.
 ; SEND-LABEL: vmax_post:
-; SEND:       str x0, [x26]
+; SEND:       str x0, [x18]
 ; SEND-NEXT:  ldr q0, [x0]
-; SEND:       str x0, [x26]
+; SEND:       str x0, [x18]
 ; SEND-NEXT:  ldr q1, [x0], #16
 ; ANNOT:       .ascii "Q1 <- [<X0> + Imm(0)]_128 loa X0 loa Imm(16)\n"
 ; ANNOT-NEXT:  .ascii "X0 <- X0 loa Imm(16)\n"

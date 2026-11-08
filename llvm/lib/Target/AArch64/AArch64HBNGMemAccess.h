@@ -25,9 +25,10 @@
 
 namespace llvm {
 
-// The register holding the STM stimulus address the sends store to. It is
-// reserved (AArch64RegisterInfo), so no other instruction uses it as a base.
-constexpr unsigned HBNGSendReg = AArch64::X26;
+// The register holding the STM stimulus address the sends store to. The
+// program is built with x18 reserved (-ffixed-x18, checked by the send pass),
+// so no other instruction uses it as a base.
+constexpr unsigned HBNGSendReg = AArch64::X18;
 
 struct HBNGMemAccess {
   enum ModeKind {

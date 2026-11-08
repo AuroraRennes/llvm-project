@@ -2,7 +2,7 @@
 ; instructions annotate only their destination, conditional selects take both
 ; data operands but not the condition, the carry is not propagated, branches
 ; carry no tag into PC and a call writes a clean LR.
-; RUN: llc -mtriple=aarch64-linux-musl -O2 < %s | FileCheck %s
+; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; cmp + cset: the result is built from the zero register only, so it is clean.
 ; CHECK-LABEL: HBNG_is_five_annot:

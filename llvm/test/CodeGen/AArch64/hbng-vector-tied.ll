@@ -1,7 +1,7 @@
 ; Vector instructions that read their destination: INS (also written MOV)
 ; keeps the other lanes of Vd and adds the inserted value; BSL/BIT/BIF read
 ; Vd, Vn and Vm.
-; RUN: llc -mtriple=aarch64-linux-musl -O2 < %s | FileCheck %s
+; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; CHECK-LABEL: HBNG_ins_gpr32_annot:
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 bit W0\n"

@@ -1,7 +1,7 @@
 ; Inline asm: nothing for an empty statement (compiler barrier), SVC for a
 ; system call, and an Unsupported line naming every other instruction instead
 ; of dropping it. Comments, labels and directives are not instructions.
-; RUN: llc -mtriple=aarch64-linux-musl -O2 < %s | FileCheck %s
+; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; CHECK-LABEL: HBNG_barrier_annot:
 ; CHECK-NEXT:  .ascii "END\n"
