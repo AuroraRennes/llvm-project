@@ -83,6 +83,12 @@
 ; CHECK-LABEL: HBNG_fmaxnm_annot:
 ; CHECK-NEXT:  .ascii "S0 <- S0 ari S1\n"
 ; CHECK-NEXT:  .ascii "END\n"
+; fcvtzu x0, d0
+; CHECK-LABEL: HBNG_f2ul_annot:
+; CHECK-NEXT:  .ascii "X0 <- D0 cvt\n"
+; fcvtas x0, d0
+; CHECK-LABEL: HBNG_lround_annot:
+; CHECK-NEXT:  .ascii "X0 <- D0 cvt\n"
 
 define <4 x i32> @add4(<4 x i32> %a, <4 x i32> %b) {
 entry:
@@ -215,3 +221,13 @@ declare <16 x i8> @llvm.ctpop.v16i8(<16 x i8>)
 declare <4 x i32> @llvm.fptosi.sat.v4i32.v4f32(<4 x float>)
 
 declare i32 @llvm.fptosi.sat.i32.f32(float)
+
+define i64 @f2ul(double %d) {
+  %r = fptoui double %d to i64
+  ret i64 %r
+}
+
+define i64 @lround(double %d) {
+  %r = call i64 @llvm.lround.i64.f64(double %d)
+  ret i64 %r
+}

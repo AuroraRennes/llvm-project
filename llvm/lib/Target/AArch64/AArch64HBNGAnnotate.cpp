@@ -977,10 +977,21 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
 
     //=== FP CONVERSION ===//
     case AArch64::FCVTDSr: case AArch64::FCVTSDr:
-    case AArch64::FCVTZSUWSr:
-    case AArch64::FCVTZSUWDr: case AArch64::FCVTZUUWDr:
-    case AArch64::SCVTFUWSri: case AArch64::SCVTFUWDri: case AArch64::SCVTFUXSri: case AArch64::SCVTFUXDri:
-    case AArch64::UCVTFUWSri: case AArch64::UCVTFUWDri: case AArch64::UCVTFUXSri: case AArch64::UCVTFUXDri:
+    case AArch64::FCVTHSr: case AArch64::FCVTSHr:
+    case AArch64::FCVTHDr: case AArch64::FCVTDHr:
+// FP to integer (every rounding, W and X destinations) and back.
+#define HBNG_FCVT_INT(R)                                                       \
+  case AArch64::FCVT##R##UWHr: case AArch64::FCVT##R##UWSr:                    \
+  case AArch64::FCVT##R##UWDr: case AArch64::FCVT##R##UXHr:                    \
+  case AArch64::FCVT##R##UXSr: case AArch64::FCVT##R##UXDr:
+    HBNG_FCVT_INT(AS) HBNG_FCVT_INT(AU) HBNG_FCVT_INT(MS) HBNG_FCVT_INT(MU)
+    HBNG_FCVT_INT(NS) HBNG_FCVT_INT(NU) HBNG_FCVT_INT(PS) HBNG_FCVT_INT(PU)
+    HBNG_FCVT_INT(ZS) HBNG_FCVT_INT(ZU)
+#undef HBNG_FCVT_INT
+    case AArch64::SCVTFUWHri: case AArch64::SCVTFUWSri: case AArch64::SCVTFUWDri:
+    case AArch64::SCVTFUXHri: case AArch64::SCVTFUXSri: case AArch64::SCVTFUXDri:
+    case AArch64::UCVTFUWHri: case AArch64::UCVTFUWSri: case AArch64::UCVTFUWDri:
+    case AArch64::UCVTFUXHri: case AArch64::UCVTFUXSri: case AArch64::UCVTFUXDri:
       Annotations = genRdOneOperandAnnotation(MI, "cvt");
       break;
 
@@ -1115,14 +1126,29 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     // Inline asm: SVC for a system call; any other instruction is not
     // described, so it is reported like an unsupported opcode rather than
     // dropped. An empty statement (a compiler barrier) annotates nothing.
-    case AArch64::INLINEASM:
-      for (const std::string &Mnemonic : getInlineAsmMnemonics(MI)) {
+    // A system register access and a barrier are described as their opcodes
+    // are: msr and barriers annotate nothing, and mrs gives a clean value
+    // when the statement is the whole asm and has one output register
+    // (otherwise which output it writes is not known here).
+    case AArch64::INLINEASM: {
+      SmallVector<std::string, 4> Mnemonics = getInlineAsmMnemonics(MI);
+      SmallVector<Register, 2> Outs;
+      for (const MachineOperand &MO : MI.operands())
+        if (MO.isReg() && MO.isDef() && !MO.isImplicit()) // not a clobber
+          Outs.push_back(MO.getReg());
+      for (const std::string &Mnemonic : Mnemonics) {
         if (Mnemonic == "svc")
           Annotations.push_back("SVC\n");
+        else if (is_contained({"msr", "dmb", "dsb", "isb", "nop"}, Mnemonic))
+          continue;
+        else if (Mnemonic == "mrs" && Mnemonics.size() == 1 && Outs.size() == 1)
+          Annotations.push_back(TRI->getRegAsmName(Outs[0]).str() +
+                                " <- Imm(0)\n");
         else
           Annotations.push_back("Unsupported: INLINEASM " + Mnemonic + "\n");
       }
       break;
+    }
     // A system register carries no tag (like the flags): its value is not
     // data the program read or received (thread pointer, FPCR/FPSR, counters).
     case AArch64::MRS:
@@ -1134,6 +1160,9 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::CFI_INSTRUCTION:
     case AArch64::DBG_VALUE:
     case AArch64::DBG_VALUE_LIST:
+    case AArch64::DBG_LABEL:
+    case AArch64::DBG_PHI:
+    case AArch64::DBG_INSTR_REF:
     case AArch64::IMPLICIT_DEF:
     case AArch64::JUMP_TABLE_DEBUG_INFO:
     case AArch64::JumpTableDest32:
