@@ -1,20 +1,21 @@
-; Vector instructions that read their destination: INS (also written MOV)
-; keeps the other lanes of Vd and adds the inserted value; BSL/BIT/BIF read
-; Vd, Vn and Vm.
+; Vector instructions that read their destination. INS (also written MOV)
+; writes one lane and keeps the other bytes of Vd: V<n>[lo:hi]. BSL/BIT/BIF
+; take byte k from byte k of their two data operands, not of the mask: BSL's
+; mask is Vd, BIT/BIF's is Vm, with Vd's old bytes as one of the data operands.
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; CHECK-LABEL: HBNG_ins_gpr32_annot:
-; CHECK-NEXT:  .ascii "Q0 <- Q0 bit W0\n"
+; CHECK-NEXT:  .ascii "V0[8:11] <- W0 mov\n"
 ; CHECK-LABEL: HBNG_ins_gpr8_annot:
-; CHECK-NEXT:  .ascii "Q0 <- Q0 bit W0\n"
+; CHECK-NEXT:  .ascii "V0[5:5] <- W0 mov\n"
 ; CHECK-LABEL: HBNG_ins_lane_annot:
-; CHECK-NEXT:  .ascii "Q0 <- Q0 bit Q1\n"
+; CHECK-NEXT:  .ascii "V0[4:7] <- V1[12:15] mov\n"
 ; CHECK-LABEL: HBNG_bsl_annot:
-; CHECK-NEXT:  .ascii "Q0 <- Q0 bit Q1 bit Q2\n"
+; CHECK-NEXT:  .ascii "Q0 <- sel Q1 Q2 mask Q0\n"
 ; CHECK-LABEL: HBNG_bit_annot:
-; CHECK-NEXT:  .ascii "Q0 <- Q0 bit Q1 bit Q2\n"
+; CHECK-NEXT:  .ascii "Q0 <- sel Q0 Q1 mask Q2\n"
 ; CHECK-LABEL: HBNG_bif_annot:
-; CHECK-NEXT:  .ascii "Q0 <- Q0 bit Q1 bit Q2\n"
+; CHECK-NEXT:  .ascii "Q0 <- sel Q0 Q1 mask Q2\n"
 
 ; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none) uwtable
 define dso_local noundef <4 x i32> @ins_gpr32(<4 x i32> noundef %v, i32 noundef %x) local_unnamed_addr {

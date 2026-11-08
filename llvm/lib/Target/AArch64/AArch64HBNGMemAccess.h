@@ -60,22 +60,170 @@ struct HBNGMemAccess {
     NoOffset     // [Rn]  (acquire/release and exclusives)
   };
 
+  // NEON structured accesses (LD1-LD4, ST1-ST4), one annotation line and one
+  // send per data register, in register order:
+  //  - VecMultiple: ld1/st1 of 1-4 registers, register r at byte r * RegBytes;
+  //  - VecInterleaved: ld2-ld4/st2-st4, element i of register r at byte
+  //    (i * NumData + r) * ElemSize;
+  //  - VecReplicate: ld1r-ld4r, one element per register, at r * ElemSize,
+  //    replicated to every element of the register;
+  //  - VecLane: one lane per register, at r * ElemSize; the other lanes are
+  //    kept.
+  enum VecKind { NotVec, VecMultiple, VecInterleaved, VecReplicate, VecLane };
+
   bool IsStore;
   unsigned Size;     // bytes moved per data register
   ModeKind Mode;
-  unsigned NumData;  // 1, or 2 for pairs
-  unsigned FirstData; // operand index of the first data register
+  unsigned NumData;  // 1, or 2 for pairs (1-4 structured registers)
+  unsigned FirstData; // operand index of the first data register (or of the
+                      // register list of a structured access)
   unsigned Base;     // operand index of the base register
-  int Offset;        // operand index of the offset (imm or register), or -1
+  int Offset;        // operand index of the offset (imm or register), or -1;
+                     // for a structured post-index access, the increment
+                     // register (XZR: by the number of bytes accessed)
   int Status;        // operand index of the store-exclusive status, or -1
+  VecKind Vec = NotVec;
+  unsigned ElemSize = 0; // structured: bytes per element
+  unsigned RegBytes = 0; // structured: 8 or 16, the width of each register
+  int Lane = -1;         // VecLane: operand index of the lane number
 
   bool hasWriteback() const { return Mode == PreIndex || Mode == PostIndex; }
   bool isRegOffset() const { return Mode == RegOffsetW || Mode == RegOffsetX; }
   // Whether the immediate is in units of Size (scaled) rather than bytes.
   bool isScaledImm() const {
-    return Mode == ScaledImm || (hasWriteback() && NumData == 2);
+    return Vec == NotVec &&
+           (Mode == ScaledImm || (hasWriteback() && NumData == 2));
   }
 };
+
+// The structured access MI performs, std::nullopt if it is not one.
+// Operands, in order: the written-back base (post-index), the register list
+// (loads: its def, then for a lane form the tied use), the lane number (lane
+// forms), the base, the increment register (post-index).
+inline std::optional<HBNGMemAccess> getHBNGVecAccess(const MachineInstr &MI) {
+  using M = HBNGMemAccess;
+  bool IsStore = false, Post = false;
+  M::VecKind Kind = M::NotVec;
+  unsigned NumRegs = 0, Elem = 0, RegBytes = 0;
+
+#define HBNG_VEC(OPC, ST, KIND, NREG, ESZ, RB)                                 \
+  case AArch64::OPC:                                                           \
+  case AArch64::OPC##_POST:                                                    \
+    IsStore = ST; Kind = M::KIND; NumRegs = NREG; Elem = ESZ; RegBytes = RB;   \
+    Post = MI.getOpcode() == AArch64::OPC##_POST;                              \
+    break;
+// The arrangements of a multiple-register access (v1d: ld1, st1, ldNr only).
+#define HBNG_VEC_ARR(P, ST, KIND, NREG)                                        \
+  HBNG_VEC(P##v16b, ST, KIND, NREG, 1, 16) HBNG_VEC(P##v8b, ST, KIND, NREG, 1, 8) \
+  HBNG_VEC(P##v8h, ST, KIND, NREG, 2, 16) HBNG_VEC(P##v4h, ST, KIND, NREG, 2, 8)  \
+  HBNG_VEC(P##v4s, ST, KIND, NREG, 4, 16) HBNG_VEC(P##v2s, ST, KIND, NREG, 4, 8)  \
+  HBNG_VEC(P##v2d, ST, KIND, NREG, 8, 16)
+#define HBNG_VEC_ARR1D(P, ST, KIND, NREG)                                      \
+  HBNG_VEC_ARR(P, ST, KIND, NREG) HBNG_VEC(P##v1d, ST, KIND, NREG, 8, 8)
+#define HBNG_VEC_LANE(P, ST, NREG)                                             \
+  HBNG_VEC(P##i8, ST, VecLane, NREG, 1, 16)                                    \
+  HBNG_VEC(P##i16, ST, VecLane, NREG, 2, 16)                                   \
+  HBNG_VEC(P##i32, ST, VecLane, NREG, 4, 16)                                   \
+  HBNG_VEC(P##i64, ST, VecLane, NREG, 8, 16)
+
+  switch (MI.getOpcode()) {
+  default:
+    return std::nullopt;
+  HBNG_VEC_ARR1D(LD1One, false, VecMultiple, 1)
+  HBNG_VEC_ARR1D(LD1Two, false, VecMultiple, 2)
+  HBNG_VEC_ARR1D(LD1Three, false, VecMultiple, 3)
+  HBNG_VEC_ARR1D(LD1Four, false, VecMultiple, 4)
+  HBNG_VEC_ARR(LD2Two, false, VecInterleaved, 2)
+  HBNG_VEC_ARR(LD3Three, false, VecInterleaved, 3)
+  HBNG_VEC_ARR(LD4Four, false, VecInterleaved, 4)
+  HBNG_VEC_ARR1D(LD1R, false, VecReplicate, 1)
+  HBNG_VEC_ARR1D(LD2R, false, VecReplicate, 2)
+  HBNG_VEC_ARR1D(LD3R, false, VecReplicate, 3)
+  HBNG_VEC_ARR1D(LD4R, false, VecReplicate, 4)
+  HBNG_VEC_LANE(LD1, false, 1) HBNG_VEC_LANE(LD2, false, 2)
+  HBNG_VEC_LANE(LD3, false, 3) HBNG_VEC_LANE(LD4, false, 4)
+  HBNG_VEC_ARR1D(ST1One, true, VecMultiple, 1)
+  HBNG_VEC_ARR1D(ST1Two, true, VecMultiple, 2)
+  HBNG_VEC_ARR1D(ST1Three, true, VecMultiple, 3)
+  HBNG_VEC_ARR1D(ST1Four, true, VecMultiple, 4)
+  HBNG_VEC_ARR(ST2Two, true, VecInterleaved, 2)
+  HBNG_VEC_ARR(ST3Three, true, VecInterleaved, 3)
+  HBNG_VEC_ARR(ST4Four, true, VecInterleaved, 4)
+  HBNG_VEC_LANE(ST1, true, 1) HBNG_VEC_LANE(ST2, true, 2)
+  HBNG_VEC_LANE(ST3, true, 3) HBNG_VEC_LANE(ST4, true, 4)
+  }
+#undef HBNG_VEC_LANE
+#undef HBNG_VEC_ARR1D
+#undef HBNG_VEC_ARR
+#undef HBNG_VEC
+
+  HBNGMemAccess A;
+  A.IsStore = IsStore;
+  A.Vec = Kind;
+  A.ElemSize = Elem;
+  A.RegBytes = RegBytes;
+  A.NumData = NumRegs;
+  A.Size = (Kind == M::VecMultiple || Kind == M::VecInterleaved) ? RegBytes
+                                                                 : Elem;
+  A.Mode = Post ? M::PostIndex : M::NoOffset;
+  A.Status = -1;
+  A.FirstData = Post ? 1 : 0;
+  unsigned Next = A.FirstData + 1;
+  if (Kind == M::VecLane) {
+    if (!IsStore)
+      ++Next; // the tied register list
+    A.Lane = Next++;
+  }
+  A.Base = Next;
+  A.Offset = Post ? int(A.Base) + 1 : -1;
+
+  assert(MI.getOperand(A.Base).isReg() &&
+         AArch64::GPR64spRegClass.contains(MI.getOperand(A.Base).getReg()) &&
+         "HBNG: base operand is not a 64-bit base register");
+  assert((A.Lane < 0 || MI.getOperand(A.Lane).isImm()) &&
+         "HBNG: lane number expected");
+  assert((A.Offset < 0 || MI.getOperand(A.Offset).isReg()) &&
+         "HBNG: increment register expected");
+  return A;
+}
+
+// Data register I of the access: an operand, or a register of the list of a
+// structured access.
+inline Register getHBNGDataReg(const MachineInstr &MI, const HBNGMemAccess &A,
+                               unsigned I, const TargetRegisterInfo *TRI) {
+  if (A.Vec == HBNGMemAccess::NotVec)
+    return MI.getOperand(A.FirstData + I).getReg();
+  Register List = MI.getOperand(A.FirstData).getReg();
+  if (AArch64::FPR128RegClass.contains(List) ||
+      AArch64::FPR64RegClass.contains(List)) {
+    assert(I == 0 && "HBNG: one register in the list");
+    return List;
+  }
+  static const unsigned QSub[] = {AArch64::qsub0, AArch64::qsub1,
+                                  AArch64::qsub2, AArch64::qsub3};
+  static const unsigned DSub[] = {AArch64::dsub0, AArch64::dsub1,
+                                  AArch64::dsub2, AArch64::dsub3};
+  bool IsQ = AArch64::QQRegClass.contains(List) ||
+             AArch64::QQQRegClass.contains(List) ||
+             AArch64::QQQQRegClass.contains(List);
+  Register R = TRI->getSubReg(List, (IsQ ? QSub : DSub)[I]);
+  assert(R && "HBNG: register list shorter than the access");
+  return R;
+}
+
+// The bytes added to the base by the write-back of A, if it is an immediate.
+inline std::optional<int64_t> getHBNGWritebackBytes(const MachineInstr &MI,
+                                                    const HBNGMemAccess &A) {
+  if (!A.hasWriteback())
+    return std::nullopt;
+  const MachineOperand &Off = MI.getOperand(A.Offset);
+  if (A.Vec != HBNGMemAccess::NotVec) {
+    if (Off.getReg() != AArch64::XZR)
+      return std::nullopt; // by a register
+    return int64_t(A.NumData) * A.Size;
+  }
+  return Off.getImm() * (A.isScaledImm() ? int64_t(A.Size) : 1);
+}
 
 // The description of MI if HBNG supports it, std::nullopt otherwise.
 inline std::optional<HBNGMemAccess> getHBNGMemAccess(const MachineInstr &MI) {
@@ -112,7 +260,7 @@ inline std::optional<HBNGMemAccess> getHBNGMemAccess(const MachineInstr &MI) {
 
   switch (MI.getOpcode()) {
   default:
-    return std::nullopt;
+    return getHBNGVecAccess(MI);
   // Loads: integer, sign-extending, FP/SIMD.
   LD_ALL(LDRBB, LDURBB, 1) LD_ALL(LDRSBW, LDURSBW, 1) LD_ALL(LDRSBX, LDURSBX, 1)
   LD_ALL(LDRHH, LDURHH, 2) LD_ALL(LDRSHW, LDURSHW, 2) LD_ALL(LDRSHX, LDURSHX, 2)
@@ -258,11 +406,11 @@ inline bool isHBNGComputedTrackedWrite(const MachineInstr &MI, Register R,
     if (U->Dst == R)
       return true;
   std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI);
-  return A && A->hasWriteback() && MI.getOperand(A->Base).getReg() == R &&
-         llvm::none_of(llvm::seq(A->FirstData, A->FirstData + A->NumData),
-                       [&](unsigned I) {
-                         return TRI->regsOverlap(MI.getOperand(I).getReg(), R);
-                       });
+  return A && MI.getOperand(A->Base).getReg() == R &&
+         getHBNGWritebackBytes(MI, *A) &&
+         llvm::none_of(llvm::seq(0u, A->NumData), [&](unsigned I) {
+           return TRI->regsOverlap(getHBNGDataReg(MI, *A, I, TRI), R);
+         });
 }
 
 // A write of SP that is not computed from tracked registers only. Supported
