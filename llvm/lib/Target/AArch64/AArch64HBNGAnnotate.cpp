@@ -712,6 +712,13 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
           Annotations.push_back("Unsupported: INLINEASM " + Mnemonic + "\n");
       }
       break;
+    // A system register carries no tag (like the flags): its value is not
+    // data the program read or received (thread pointer, FPCR/FPSR, counters).
+    case AArch64::MRS:
+      Annotations = genZero(MI);
+      break;
+    // Barriers and hints move no data.
+    case AArch64::DMB: case AArch64::DSB: case AArch64::ISB: case AArch64::HINT:
     case AArch64::CLREX:           // Cancel exclusive access
     case AArch64::CFI_INSTRUCTION:
     case AArch64::DBG_VALUE:

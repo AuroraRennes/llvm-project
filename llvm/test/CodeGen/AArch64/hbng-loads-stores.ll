@@ -82,6 +82,24 @@
 ; ANNOT-NEXT:  .ascii "LR <- [<SP> + Imm(0)]_64\n"
 ; ANNOT-NEXT:  .ascii "<SP> <- <SP> + Imm(16)\n"
 
+; Non-temporal pairs: like LDP/STP with a scaled immediate.
+; SEND-LABEL: nt_store:
+; SEND:       stp x0, x0, [x18]
+; SEND-NEXT:  stnp q0, q1, [x0]
+; ANNOT-LABEL: HBNG_nt_store_annot:
+; ANNOT-NEXT:  .ascii "[<X0> + 16*Imm(0)]_128 <- Q0\n"
+; ANNOT-NEXT:  .ascii "[<X0> + 16*Imm(0) + 16]_128 <- Q1\n"
+
+; Acquire load and release store with an unscaled offset (RCPC2).
+; SEND-LABEL: rcpc_imm:
+; SEND:       str x0, [x18]
+; SEND-NEXT:  ldapur w8, [x0, #8]
+; SEND:       str x0, [x18]
+; SEND-NEXT:  stlur w8, [x0, #4]
+; ANNOT-LABEL: HBNG_rcpc_imm_annot:
+; ANNOT-NEXT:  .ascii "W8 <- [<X0> + Imm(8)]_32\n"
+; ANNOT-NEXT:  .ascii "[<X0> + Imm(4)]_32 <- W8\n"
+
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "aarch64-unknown-linux-musl"
 
@@ -183,3 +201,18 @@ entry:
   call void @use(ptr %a)
   ret void
 }
+
+define void @nt_store(ptr %p, <8 x i32> %v) {
+  store <8 x i32> %v, ptr %p, align 16, !nontemporal !0
+  ret void
+}
+
+define void @rcpc_imm(ptr %p) "target-features"="+rcpc-immo" {
+  %a = getelementptr inbounds i8, ptr %p, i64 8
+  %v = load atomic i32, ptr %a acquire, align 4
+  %b = getelementptr inbounds i8, ptr %p, i64 4
+  store atomic i32 %v, ptr %b release, align 4
+  ret void
+}
+
+!0 = !{i32 1}
