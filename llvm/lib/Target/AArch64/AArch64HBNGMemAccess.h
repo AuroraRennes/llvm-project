@@ -19,6 +19,11 @@
 
 #include "AArch64InstrInfo.h"
 #include "AArch64RegisterInfo.h"
+#include "MCTargetDesc/AArch64AddressingModes.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Sequence.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include <cassert>
 #include <optional>
@@ -29,6 +34,20 @@ namespace llvm {
 // program is built with x18 reserved (-ffixed-x18, checked by the send pass),
 // so no other instruction uses it as a base.
 constexpr unsigned HBNGSendReg = AArch64::X18;
+
+// The registers whose values the annotations track: SP and FP (x29). Their
+// first values are sent once by the start code. From then on:
+//  - an update by an immediate from SP or FP (and the write-back of an access
+//    based on them) is computed from the annotation, with no send;
+//  - any other write of SP is an ALU instruction (SP cannot be loaded, nor
+//    stored to the STM): its untracked source registers are sent before it,
+//    like address registers, and the annotation computes the value;
+//  - any other write of FP (the epilogue's reload, a move) sends the new
+//    value right after the instruction, the only point where it exists.
+// An access based on SP or FP sends nothing.
+inline bool isHBNGTrackedReg(Register R) {
+  return R == AArch64::SP || R == AArch64::FP;
+}
 
 struct HBNGMemAccess {
   enum ModeKind {
@@ -173,6 +192,122 @@ inline std::optional<HBNGMemAccess> getHBNGMemAccess(const MachineInstr &MI) {
           MI.getOperand(A.Offset).isMCSymbol()) &&
          "HBNG: immediate offset expected");
   return A;
+}
+
+// An update of a tracked register the annotations compute: Rd <- Rn + Imm
+// with Rd and Rn tracked (ADD/SUB immediate, e.g. "mov x29, sp",
+// "sub sp, sp, #16", "mov sp, x29").
+struct HBNGTrackedUpdate {
+  Register Dst;
+  Register Src;
+  int64_t Imm; // in bytes, negative for SUB
+};
+
+inline std::optional<HBNGTrackedUpdate>
+getHBNGTrackedImmUpdate(const MachineInstr &MI) {
+  if (MI.getOpcode() != AArch64::ADDXri && MI.getOpcode() != AArch64::SUBXri)
+    return std::nullopt;
+  if (!MI.getOperand(2).isImm())
+    return std::nullopt; // a symbol (:lo12:), not a constant
+  Register Dst = MI.getOperand(0).getReg(), Src = MI.getOperand(1).getReg();
+  if (!isHBNGTrackedReg(Dst) || !isHBNGTrackedReg(Src))
+    return std::nullopt;
+  int64_t Imm = MI.getOperand(2).getImm()
+                << AArch64_AM::getShiftValue(MI.getOperand(3).getImm());
+  return HBNGTrackedUpdate{Dst, Src,
+                           MI.getOpcode() == AArch64::SUBXri ? -Imm : Imm};
+}
+
+// Whether MI writes R (or a part of it) through a def operand. A call
+// preserves SP and FP (AAPCS64), although it carries an implicit def of SP and
+// its register mask does not list SP.
+inline bool hbngDefinesReg(const MachineInstr &MI, Register R,
+                           const TargetRegisterInfo *TRI) {
+  if (MI.isCall())
+    return false;
+  return llvm::any_of(MI.operands(), [&](const MachineOperand &MO) {
+    return MO.isReg() && MO.isDef() && MO.getReg().isPhysical() &&
+           TRI->regsOverlap(MO.getReg(), R);
+  });
+}
+
+// Whether the write of the tracked register R by MI is computed from the
+// annotation with no send: an immediate update from a tracked register, or
+// the write-back of an access based on R (base + immediate).
+inline bool isHBNGComputedTrackedWrite(const MachineInstr &MI, Register R,
+                                       const TargetRegisterInfo *TRI) {
+  if (std::optional<HBNGTrackedUpdate> U = getHBNGTrackedImmUpdate(MI))
+    if (U->Dst == R)
+      return true;
+  std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI);
+  return A && A->hasWriteback() && MI.getOperand(A->Base).getReg() == R &&
+         llvm::none_of(llvm::seq(A->FirstData, A->FirstData + A->NumData),
+                       [&](unsigned I) {
+                         return TRI->regsOverlap(MI.getOperand(I).getReg(), R);
+                       });
+}
+
+// A write of SP that is not computed from tracked registers only. Supported
+// is false for an opcode whose value the annotations do not describe (none
+// is known: these are all the instructions that can write SP).
+struct HBNGSPWrite {
+  bool Supported;
+  bool IsSub;              // ADD/SUB: subtracts the second operand
+  int Rn;                  // operand index of the first source
+  int Rm;                  // operand index of the register source, or -1
+  SmallVector<Register, 2> Sends; // untracked sources (X registers), sent
+                                  // before MI
+};
+
+inline std::optional<HBNGSPWrite>
+getHBNGSPWrite(const MachineInstr &MI, const TargetRegisterInfo *TRI) {
+  if (!hbngDefinesReg(MI, AArch64::SP, TRI) ||
+      isHBNGComputedTrackedWrite(MI, AArch64::SP, TRI))
+    return std::nullopt;
+  HBNGSPWrite W{false, false, -1, -1, {}};
+  switch (MI.getOpcode()) {
+  case AArch64::SUBXri:
+    W.IsSub = true;
+    [[fallthrough]];
+  case AArch64::ADDXri:
+  case AArch64::ANDXri:
+  case AArch64::ORRXri:
+  case AArch64::EORXri:
+    W.Supported = MI.getOperand(2).isImm();
+    W.Rn = 1;
+    break;
+  case AArch64::SUBXrx:
+  case AArch64::SUBXrx64:
+    W.IsSub = true;
+    [[fallthrough]];
+  case AArch64::ADDXrx:
+  case AArch64::ADDXrx64:
+    W.Supported = true;
+    W.Rn = 1;
+    W.Rm = 2;
+    break;
+  default:
+    return W;
+  }
+  for (int I : {W.Rn, W.Rm}) {
+    if (I < 0)
+      continue;
+    Register R = MI.getOperand(I).getReg();
+    if (AArch64::GPR32allRegClass.contains(R))
+      R = TRI->getMatchingSuperReg(R, AArch64::sub_32,
+                                   &AArch64::GPR64allRegClass);
+    if (!isHBNGTrackedReg(R) && R != AArch64::XZR)
+      W.Sends.push_back(R);
+  }
+  return W;
+}
+
+// Whether MI writes FP with a value the annotations cannot compute: its new
+// value is sent right after MI.
+inline bool isHBNGFPSentAfter(const MachineInstr &MI,
+                              const TargetRegisterInfo *TRI) {
+  return hbngDefinesReg(MI, AArch64::FP, TRI) &&
+         !isHBNGComputedTrackedWrite(MI, AArch64::FP, TRI);
 }
 
 // Whether MI is a send inserted by the STM send pass (a store based on the

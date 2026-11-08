@@ -54,6 +54,7 @@ public:
 
     // Generate annotations for all instructions in a given machine function
     std::vector<std::string> generateAnnotation(MachineInstr &MI);
+    std::vector<std::string> generateTagAnnotation(MachineInstr &MI);
 
     // Main entrypoint for LLVM backend passes
     bool runOnMachineFunction(MachineFunction &MF) override;
@@ -73,6 +74,8 @@ private:
     std::vector<std::string> genMemAnnotation(MachineInstr &MI, const HBNGMemAccess &A);
     std::vector<std::string> genZero(MachineInstr &MI);
     std::vector<std::string> genInsertAnnotation(MachineInstr &MI);
+    std::string genTrackedValueLine(Register Dst, Register Src, int64_t Imm);
+    std::string genSPWriteLine(MachineInstr &MI, const HBNGSPWrite &W);
     bool writesZeroReg(MachineInstr &MI);
 };
 
@@ -258,20 +261,74 @@ std::vector<std::string> AArch64HBNGAnnotate::genInsertAnnotation(MachineInstr &
   return {Result + "\n"};
 }
 
+// The value of a tracked register (SP, FP) computed from another one:
+//   <Dst> <- <Src> + Imm(b)        (b in bytes, may be negative)
+std::string AArch64HBNGAnnotate::genTrackedValueLine(Register Dst, Register Src,
+                                                     int64_t Imm) {
+  std::string Result;
+  raw_string_ostream OS(Result);
+  OS << "<" << TRI->getRegAsmName(Dst) << "> <- <" << TRI->getRegAsmName(Src)
+     << "> + Imm(" << Imm << ")";
+  LLVM_DEBUG(dbgs() << Result << "\n");
+  return Result + "\n";
+}
+
+// The value of SP written by MI from sources that are not all tracked (see
+// generateAnnotation for the forms).
+std::string AArch64HBNGAnnotate::genSPWriteLine(MachineInstr &MI,
+                                                const HBNGSPWrite &W) {
+  if (!W.Supported)
+    return "Unsupported: SP <- " + std::string(TII->getName(MI.getOpcode())) +
+           "\n";
+  std::string Result;
+  raw_string_ostream OS(Result);
+  OS << "<SP> <- <" << TRI->getRegAsmName(MI.getOperand(W.Rn).getReg())
+     << "> ";
+  int64_t Imm = MI.getOperand(2).isImm() ? MI.getOperand(2).getImm() : 0;
+  switch (MI.getOpcode()) {
+  case AArch64::ADDXri:
+  case AArch64::SUBXri: {
+    int64_t Bytes = Imm << AArch64_AM::getShiftValue(MI.getOperand(3).getImm());
+    OS << "+ Imm(" << (W.IsSub ? -Bytes : Bytes) << ")";
+    break;
+  }
+  case AArch64::ANDXri:
+  case AArch64::ORRXri:
+  case AArch64::EORXri:
+    OS << (MI.getOpcode() == AArch64::ANDXri   ? "and"
+           : MI.getOpcode() == AArch64::ORRXri ? "orr"
+                                               : "eor")
+       << " Imm(" << int64_t(AArch64_AM::decodeLogicalImmediate(Imm, 64))
+       << ")";
+    break;
+  default: { // ADD/SUB extended register
+    unsigned Ext = MI.getOperand(3).getImm();
+    OS << (W.IsSub ? "- <" : "+ <")
+       << TRI->getRegAsmName(MI.getOperand(W.Rm).getReg()) << "> "
+       << AArch64_AM::getShiftExtendName(AArch64_AM::getArithExtendType(Ext))
+       << " " << AArch64_AM::getArithShiftValue(Ext);
+    break;
+  }
+  }
+  LLVM_DEBUG(dbgs() << Result << "\n");
+  return Result + "\n";
+}
+
 // A call writes the return address, a constant, into LR.
 std::vector<std::string> AArch64HBNGAnnotate::genLinkAnnotation() {
   return {"LR <- Imm(0)\n"};
 }
 
 // Annotations of a load or store, in the form (one line per data register,
-// then the store-exclusive status):
+// then the write-back of a tracked base, then the store-exclusive status):
 //   Rt <- [<Rn> + Off + k]_Bits                     (load)
 //   [<Rn> + Off + k]_Bits <- Rt                     (store)
+//   <Rn> <- <Rn> + Imm(b)                           (write-back of SP or FP)
 //   Ws <- Imm(0)                                    (store-exclusive status)
 // No pointer tainting: the tags of the address registers do not reach the
-// data. A pre/post-indexed write-back adds an immediate to the base, which
-// leaves its tag unchanged, so it needs no line; the base is sent again at its
-// next access.
+// data. The write-back leaves the tag of the base unchanged (an immediate is
+// added), so it needs a line only for a tracked base, whose value it updates
+// (b in bytes); any other base is sent at its next access.
 // Off is in bytes: "S*Imm(i)" for an immediate in units of the access size S,
 // "Imm(i)" for a byte immediate, "<Rm> ext amount" for a register offset, and
 // "Imm(0)" for a post-indexed access (the address is the base before the
@@ -331,6 +388,13 @@ std::vector<std::string> AArch64HBNGAnnotate::genMemAnnotation(
     Annotations.push_back(Result + "\n");
   }
 
+  if (A.hasWriteback() && isHBNGTrackedReg(Base.getReg())) {
+    int64_t Bytes = MI.getOperand(A.Offset).getImm() *
+                    (A.isScaledImm() ? int64_t(A.Size) : 1);
+    Annotations.push_back(
+        genTrackedValueLine(Base.getReg(), Base.getReg(), Bytes));
+  }
+
   if (A.Status >= 0) {
     std::string Result;
     raw_string_ostream OS(Result);
@@ -346,7 +410,30 @@ std::vector<std::string> AArch64HBNGAnnotate::genMemAnnotation(
 //===----------------------------------------------------------------------===//
 // Main annotation generation function
 
+// The annotations of MI: its tag lines (generateTagAnnotation), then the
+// values of the tracked registers it writes (SP, FP, see isHBNGTrackedReg):
+//   <Dst> <- <Src> + Imm(b)       immediate update from a tracked register
+//   <SP> <- <Rn> + Imm(b)         any other write of SP, from sent sources
+//   <SP> <- <Rn> +|- <Rm> ext s   (sent before MI unless tracked)
+//   <SP> <- <Rn> and|orr|eor Imm(mask)
+//   <FP> <- SEND                  any other write of FP, sent after MI
+// with b in bytes (negative for SUB). The write-back of an access based on a
+// tracked register is described with the access (genMemAnnotation).
 std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &MI) {
+  if (isHBNGSend(MI))
+    return {};
+  std::vector<std::string> Annotations = generateTagAnnotation(MI);
+  if (std::optional<HBNGTrackedUpdate> U = getHBNGTrackedImmUpdate(MI))
+    Annotations.push_back(genTrackedValueLine(U->Dst, U->Src, U->Imm));
+  if (std::optional<HBNGSPWrite> W = getHBNGSPWrite(MI, TRI))
+    Annotations.push_back(genSPWriteLine(MI, *W));
+  if (isHBNGFPSentAfter(MI, TRI))
+    Annotations.push_back("<" + std::string(TRI->getRegAsmName(AArch64::FP)) +
+                          "> <- SEND\n");
+  return Annotations;
+}
+
+std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr &MI) {
   std::vector<std::string> Annotations = {};
 
   std::string Unsupported;

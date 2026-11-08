@@ -70,11 +70,17 @@
 ; ANNOT-NOT:   X0 <-
 
 ; Pre-indexed stack spill: byte offset, unscaled; post-indexed reload: the
-; address is SP itself.
+; address is SP itself. SP is tracked: no send, and the write-back updates its
+; value in bytes.
+; SEND-LABEL: spill_pre:
+; SEND-NOT:    x18
+; SEND:        .Lfunc_end
 ; ANNOT-LABEL: HBNG_spill_pre_annot:
 ; ANNOT-NEXT:  .ascii "[<SP> + Imm(-16)]_64 <- LR\n"
+; ANNOT-NEXT:  .ascii "<SP> <- <SP> + Imm(-16)\n"
 ; ANNOT-LABEL: HBNG_spill_pre_split_0_annot:
 ; ANNOT-NEXT:  .ascii "LR <- [<SP> + Imm(0)]_64\n"
+; ANNOT-NEXT:  .ascii "<SP> <- <SP> + Imm(16)\n"
 
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "aarch64-unknown-linux-musl"

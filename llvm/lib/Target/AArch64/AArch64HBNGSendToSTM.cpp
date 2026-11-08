@@ -41,6 +41,10 @@ public:
     void insertStoreForAddressOperand(MachineBasicBlock &MBB, MachineInstr &MI,
                                       const HBNGMemAccess &A);
 
+    // Insert sends of Regs at Where, two by two
+    void insertSends(MachineBasicBlock &MBB, MachineBasicBlock::iterator Where,
+                     const DebugLoc &DL, ArrayRef<Register> Regs);
+
     // Main entrypoint for LLVM backend passes
     bool runOnMachineFunction(MachineFunction &MF) override;
 
@@ -61,8 +65,8 @@ INITIALIZE_PASS(AArch64HBNGSendToSTM, DEBUG_TYPE, "HardBlare-NG Send to STM pass
 // Main insertion function
 
 // Sends, before MI, the address registers each of its annotation lines refers
-// to: the base (unless it is SP, which the annotations track from the start of
-// the trace) and the register offset, once per data register (twice for a
+// to: the base (unless it is SP or FP, whose values the annotations track, see
+// isHBNGTrackedReg) and the register offset, once per data register (twice for a
 // pair). A W register offset is sent as its X register. The registers are
 // sent two by two with STP, the second one at the lower address, which the STM
 // emits first, or alone with STR.
@@ -81,7 +85,7 @@ void AArch64HBNGSendToSTM::insertStoreForAddressOperand(
 
     SmallVector<Register, 2> AddrRegs;
     Register Base = MI.getOperand(A.Base).getReg();
-    if (Base != AArch64::SP)
+    if (!isHBNGTrackedReg(Base))
         AddrRegs.push_back(Base);
     if (A.isRegOffset()) {
         Register Off = MI.getOperand(A.Offset).getReg();
@@ -98,17 +102,25 @@ void AArch64HBNGSendToSTM::insertStoreForAddressOperand(
     MachineBasicBlock::iterator Where = MI.getIterator();
     if (A.Status >= 0) // store-exclusive
         Where = std::next(Where);
+    insertSends(MBB, Where, MI.getDebugLoc(), Sends);
+}
 
-    for (unsigned I = 0; I < Sends.size(); I += 2) {
-        if (I + 1 < Sends.size())
-            BuildMI(MBB, Where, MI.getDebugLoc(), TII->get(AArch64::STPXi))
-                .addReg(Sends[I + 1])
-                .addReg(Sends[I])
+// The registers are sent two by two with STP, the second one at the lower
+// address, which the STM emits first, or alone with STR.
+void AArch64HBNGSendToSTM::insertSends(MachineBasicBlock &MBB,
+                                       MachineBasicBlock::iterator Where,
+                                       const DebugLoc &DL,
+                                       ArrayRef<Register> Regs) {
+    for (unsigned I = 0; I < Regs.size(); I += 2) {
+        if (I + 1 < Regs.size())
+            BuildMI(MBB, Where, DL, TII->get(AArch64::STPXi))
+                .addReg(Regs[I + 1])
+                .addReg(Regs[I])
                 .addReg(TARGET_REG)
                 .addImm(0);
         else
-            BuildMI(MBB, Where, MI.getDebugLoc(), TII->get(AArch64::STRXui))
-                .addReg(Sends[I])
+            BuildMI(MBB, Where, DL, TII->get(AArch64::STRXui))
+                .addReg(Regs[I])
                 .addReg(TARGET_REG)
                 .addImm(0);
     }
@@ -158,14 +170,33 @@ bool AArch64HBNGSendToSTM::runOnMachineFunction(MachineFunction &MF) {
                                   })) &&
                    "HBNG: load or store inside a bundle");
 
-            // Only the loads/stores the annotation pass describes
-            std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI);
-            if (!A)
-                continue;
+            // The address registers of the loads/stores the annotation pass
+            // describes, before them
+            if (std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI)) {
+                insertStoreForAddressOperand(MBB, MI, *A);
+                Changed = true;
+            }
 
-            // Add the store to STM
-            insertStoreForAddressOperand(MBB, MI, *A);
-            Changed = true;
+            // The sources of a write of SP the annotations cannot compute
+            // from tracked registers, before it
+            if (std::optional<HBNGSPWrite> W = getHBNGSPWrite(MI, TRI);
+                W && !W->Sends.empty()) {
+                insertSends(MBB, MI.getIterator(), MI.getDebugLoc(), W->Sends);
+                Changed = true;
+            }
+
+            // The new value of FP, when the annotations cannot compute it,
+            // right after MI (after a store-exclusive's own sends): it only
+            // exists once MI has run, e.g. the epilogue's reload of x29.
+            if (isHBNGFPSentAfter(MI, TRI)) {
+                assert(!MI.isTerminator() && "HBNG: FP written by a terminator");
+                MachineBasicBlock::iterator Where = std::next(MI.getIterator());
+                while (Where != MBB.end() && isHBNGSend(*Where))
+                    ++Where;
+                Register FP = AArch64::FP;
+                insertSends(MBB, Where, MI.getDebugLoc(), FP);
+                Changed = true;
+            }
         }
     }
 
