@@ -71,6 +71,7 @@ private:
     std::vector<std::string> genLinkAnnotation();
     std::vector<std::string> genMemAnnotation(MachineInstr &MI, const HBNGMemAccess &A);
     std::vector<std::string> genZero(MachineInstr &MI);
+    std::vector<std::string> genInsertAnnotation(MachineInstr &MI);
     bool writesZeroReg(MachineInstr &MI);
 };
 
@@ -215,6 +216,20 @@ std::vector<std::string> AArch64HBNGAnnotate::genRdPCAnnotation(MachineInstr &MI
   OS << "]"
 #endif
 
+  LLVM_DEBUG(dbgs() << Result << "\n");
+  return {Result + "\n"};
+}
+
+// Lane insert (INS, also written MOV): Vd <- Vd bit Src. The register keeps
+// the tags of its other lanes, so the destination is also a source.
+std::vector<std::string> AArch64HBNGAnnotate::genInsertAnnotation(MachineInstr &MI) {
+  std::string Result;
+  raw_string_ostream OS(Result);
+  printStrOperand(MI.getOperand(0), OS);
+  OS << " <- ";
+  printStrOperand(MI.getOperand(1), OS);
+  OS << " bit ";
+  printStrOperand(MI.getOperand(3), OS);
   LLVM_DEBUG(dbgs() << Result << "\n");
   return {Result + "\n"};
 }
@@ -524,9 +539,10 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
       Annotations = genRdTwoOperandsAnnotation(MI, "bit");
       break;
     // Vector merges
+    // (Vd, Vd tied, Vn, Vm): Vd's own bits are one of the three inputs.
     case AArch64::BIFv16i8: case AArch64::BIFv8i8: case AArch64::BITv16i8: case AArch64::BITv8i8:
     case AArch64::BSLv16i8: case AArch64::BSLv8i8:
-      Annotations = genRdTwoOperandsAnnotation(MI, "bit");
+      Annotations = genRdThreeOperandsAnnotation(MI, "bit");
       break;
     case AArch64::DUPi32: case AArch64::DUPi64:
       Annotations = genRdImmAnnotation(MI, "bit", false);
@@ -535,8 +551,12 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
     case AArch64::DUPv2i32gpr: case AArch64::DUPv2i64gpr: case AArch64::DUPv4i32gpr:
       Annotations = genRdOneOperandAnnotation(MI, "bit");
       break;
-    case AArch64::INSvi32gpr: case AArch64::INSvi64gpr: case AArch64::INSvi32lane: case AArch64::INSvi64lane:
-      Annotations = genRdOneOperandAnnotation(MI, "bit");
+    // (Vd, Vd tied, idx, Rn [, idx2]): one lane from Rn, the others kept.
+    case AArch64::INSvi8gpr: case AArch64::INSvi16gpr:
+    case AArch64::INSvi32gpr: case AArch64::INSvi64gpr:
+    case AArch64::INSvi8lane: case AArch64::INSvi16lane:
+    case AArch64::INSvi32lane: case AArch64::INSvi64lane:
+      Annotations = genInsertAnnotation(MI);
       break;
 
     // Bit count and reverse
