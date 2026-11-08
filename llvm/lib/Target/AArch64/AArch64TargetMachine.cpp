@@ -957,6 +957,10 @@ void AArch64PassConfig::addPostBBSections() {
   addPass(createAArch64PointerAuthPass());
   if (EnableBranchTargets)
     addPass(createAArch64BranchTargetsPass());
+  // HBNG: insert the stores that send base register values down the STM
+  // before branch relaxation and jump-table compression, so that both measure
+  // the code with the sends in it. The annotation pass, later, skips them.
+  addPass(createAArch64HBNGSendToSTMPass());
   // Relax conditional branch instructions if they're otherwise out of
   // range of their destination.
   if (BranchRelaxation)
@@ -975,10 +979,6 @@ void AArch64PassConfig::addPreEmitPass2() {
   addPass(createUnpackMachineBundlesLegacy(nullptr));
   // HBNG: Add the pass at the end of the emission, after all optimizations
   addPass(createAArch64HBNGAnnotatePass());
-  // HBNG: Once the annotations have been generated for all instructions, add
-  //       store instructions to send base register values down the STM. Placed
-  //       here to avoid generating annotations for them.
-  addPass(createAArch64HBNGSendToSTMPass());
 }
 
 bool AArch64PassConfig::addRegAssignAndRewriteOptimized() {

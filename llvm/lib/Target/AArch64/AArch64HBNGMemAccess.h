@@ -25,6 +25,10 @@
 
 namespace llvm {
 
+// The register holding the STM stimulus address the sends store to. It is
+// reserved (AArch64RegisterInfo), so no other instruction uses it as a base.
+constexpr unsigned HBNGSendReg = AArch64::X26;
+
 struct HBNGMemAccess {
   enum ModeKind {
     ScaledImm,   // [Rn, #imm * Size]
@@ -168,6 +172,13 @@ inline std::optional<HBNGMemAccess> getHBNGMemAccess(const MachineInstr &MI) {
           MI.getOperand(A.Offset).isMCSymbol()) &&
          "HBNG: immediate offset expected");
   return A;
+}
+
+// Whether MI is a send inserted by the STM send pass (a store based on the
+// reserved register). The annotation pass runs after it and skips them.
+inline bool isHBNGSend(const MachineInstr &MI) {
+  std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI);
+  return A && A->IsStore && MI.getOperand(A->Base).getReg() == HBNGSendReg;
 }
 
 } // end namespace llvm

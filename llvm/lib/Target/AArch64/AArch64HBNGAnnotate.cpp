@@ -368,6 +368,10 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
   raw_string_ostream OS(Unsupported);
   OS << "Unsupported: " << TII->getName(MI.getOpcode());
 
+  // The sends are not part of the program: the coprocessor receives them.
+  if (isHBNGSend(MI))
+    return {};
+
   if (TII->isGPRZero(MI)) {
     return genZero(MI);
   }
@@ -727,6 +731,13 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
 
           // Insert the pseudo instruction in the MBB
           BuildMI(MBB, std::next(MIIt), DebugLoc(), TII->get(AArch64::HBNG_ATOM_LABEL));
+          // The AsmPrinter finds the branches to a block by scanning its
+          // predecessor's terminators back from the end; the pseudo stops the
+          // scan, hiding this branch. Its targets must keep their labels (a
+          // branch to the next block, e.g. tbnz + b from branch relaxation).
+          for (MachineOperand &MO : MI.operands())
+            if (MO.isMBB())
+              MO.getMBB()->setLabelMustBeEmitted();
 
           // Create the new symbols, splitting the basic block and annotations
           std::string SplitBaseName = SymbolName + "_split_" + std::to_string(SplitIndex++);
