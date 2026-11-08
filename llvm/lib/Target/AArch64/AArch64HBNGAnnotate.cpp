@@ -3,6 +3,7 @@
 #include "AArch64InstrInfo.h"
 #include "AArch64MachineFunctionInfo.h"
 #include "AArch64Subtarget.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstr.h"
@@ -86,15 +87,38 @@ INITIALIZE_PASS(AArch64HBNGAnnotate, DEBUG_TYPE, "HardBlare-NG annotation pass",
 //===----------------------------------------------------------------------===//
 // Helper functions
 
-static bool containsSVC(MachineInstr &MI) {
-  bool IsSVC = false;
-  if (MI.isInlineAsm()) {
-    StringRef AsmStr = MI.getOperand(0).getSymbolName();
-    if (AsmStr.contains("svc")) {
-      IsSVC = true;
+// The mnemonics of the instructions in an inline asm statement, in order and in
+// lower case: statements are separated by newlines and ';', and comments
+// ("//"), labels ("1:") and directives (".text") are dropped.
+static SmallVector<std::string, 4> getInlineAsmMnemonics(const MachineInstr &MI) {
+  SmallVector<std::string, 4> Mnemonics;
+  if (!MI.isInlineAsm())
+    return Mnemonics;
+  SmallVector<StringRef, 8> Lines;
+  StringRef(MI.getOperand(0).getSymbolName()).split(Lines, '\n');
+  for (StringRef Line : Lines) {
+    SmallVector<StringRef, 4> Statements;
+    Line.split("//").first.split(Statements, ';');
+    for (StringRef Rest : Statements) {
+      // The first token after the labels is the mnemonic.
+      while (true) {
+        auto [Token, Next] = getToken(Rest, " \t\r\v\f");
+        Rest = Next;
+        if (Token.empty())
+          break;
+        if (Token.ends_with(":"))
+          continue; // label
+        if (!Token.starts_with("."))
+          Mnemonics.push_back(Token.lower());
+        break;
+      }
     }
   }
-  return IsSVC;
+  return Mnemonics;
+}
+
+static bool containsSVC(MachineInstr &MI) {
+  return llvm::is_contained(getInlineAsmMnemonics(MI), "svc");
 }
 
 void AArch64HBNGAnnotate::printStrOperand(MachineOperand &MO, raw_string_ostream &OS) {
@@ -601,9 +625,15 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
       break;
 
     // Ignore
+    // Inline asm: SVC for a system call; any other instruction is not
+    // described, so it is reported like an unsupported opcode rather than
+    // dropped. An empty statement (a compiler barrier) annotates nothing.
     case AArch64::INLINEASM:
-      if (containsSVC(MI)) {
-        Annotations.push_back("SVC\n");
+      for (const std::string &Mnemonic : getInlineAsmMnemonics(MI)) {
+        if (Mnemonic == "svc")
+          Annotations.push_back("SVC\n");
+        else
+          Annotations.push_back("Unsupported: INLINEASM " + Mnemonic + "\n");
       }
       break;
     case AArch64::CLREX:           // Cancel exclusive access
