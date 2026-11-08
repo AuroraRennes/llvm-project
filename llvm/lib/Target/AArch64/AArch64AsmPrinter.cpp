@@ -1215,15 +1215,14 @@ void AArch64AsmPrinter::emitFunctionBodyStart() {
 }
 
 void AArch64AsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
-  // HBNG: Get the corresponding custom label and emit it, update the bbtindex
-  auto *FI =  MF->getInfo<AArch64FunctionInfo>();
-  std::vector<HBNGAnnotationInfo> BBAnnotInfos = FI->BBAnnotationInfos;
-  if (!BBAnnotInfos.empty()) {
-    MCSymbol *BBSym = BBAnnotInfos[FI->BBTIndex].BBSymbol;
+  // HBNG: emit the block's label from the block table, if the function has
+  // one (not for hbng_no_instr functions), then the block itself.
+  auto *FI = MF->getInfo<AArch64FunctionInfo>();
+  if (!FI->BBAnnotationInfos.empty()) {
+    OutStreamer->emitLabel(FI->BBAnnotationInfos[FI->BBTIndex].BBSymbol);
     ++FI->BBTIndex;
-    OutStreamer->emitLabel(BBSym);
-    AsmPrinter::emitBasicBlockStart(MBB);
   }
+  AsmPrinter::emitBasicBlockStart(MBB);
 }
 
 

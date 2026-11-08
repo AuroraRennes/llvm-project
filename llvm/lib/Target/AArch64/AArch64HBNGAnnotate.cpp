@@ -661,14 +661,14 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
 bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
     LLVM_DEBUG(dbgs() << "***** HBNG Annotations *****\n");
 
-    // TODO: Would be nice but activating it breaks the generation of temporary symbols
-    // const Function &F = MF.getFunction();
-    // if (F.hasFnAttribute("hbng_no_instr")) {
-    //   // FIXME: temporary labels are not emitted I dont know why
-    //   for (auto &MBB : MF) MBB.setLabelMustBeEmitted();
-    //   LLVM_DEBUG(dbgs() << "Skipping instrumentation for " << F.getName() << "\n");
-    //   return false;
-    // }
+    // A hbng_no_instr function is uncompiled code for HBNG: no annotations, no
+    // block table entries (and no sends, see the STM send pass). It runs, for
+    // instance, before the STM address is in place (crt's _start_c).
+    const Function &F = MF.getFunction();
+    if (F.hasFnAttribute("hbng_no_instr")) {
+      LLVM_DEBUG(dbgs() << "Skipping annotations for " << F.getName() << "\n");
+      return false;
+    }
 
 
     // Initialize subtarget information as attributes
