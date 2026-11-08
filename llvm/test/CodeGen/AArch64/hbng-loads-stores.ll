@@ -14,9 +14,9 @@
 ; SEND:       stlxr w10, x9, [x8]
 ; SEND-NEXT:  str x8, [x18]
 ; ANNOT-LABEL: HBNG_excl_add_n_1_annot:
-; ANNOT-NEXT:  .ascii "X0 <- [<X8> + Imm(0)]_64 loa X8\n"
+; ANNOT-NEXT:  .ascii "X0 <- [<X8> + Imm(0)]_64\n"
 ; ANNOT-NEXT:  .ascii "X9 <- X0 add X1\n"
-; ANNOT-NEXT:  .ascii "[<X8> + Imm(0)]_64 <- X9 sto X8\n"
+; ANNOT-NEXT:  .ascii "[<X8> + Imm(0)]_64 <- X9\n"
 ; ANNOT-NEXT:  .ascii "W10 <- Imm(0)\n"
 
 ; Register offsets: shift by log2 of the access size; a W offset is sent as
@@ -28,35 +28,37 @@
 ; SEND:       stp x1, x0, [x18]
 ; SEND-NEXT:  ldr w0, [x0, w1, sxtw #2]
 ; ANNOT-LABEL: HBNG_reg_x_annot:
-; ANNOT-NEXT:  .ascii "X0 <- [<X0> + <X1> uxtx 3]_64 loa X0 loa X1\n"
+; ANNOT-NEXT:  .ascii "X0 <- [<X0> + <X1> uxtx 3]_64\n"
 ; ANNOT-LABEL: HBNG_reg_w_annot:
-; ANNOT-NEXT:  .ascii "W0 <- [<X0> + <W1> sxtw 2]_32 loa X0 loa W1\n"
+; ANNOT-NEXT:  .ascii "W0 <- [<X0> + <W1> sxtw 2]_32\n"
 
 ; Sign-extending byte load: one byte, immediate scaled by 1.
 ; SEND-LABEL: ldrsb_imm:
 ; SEND:       str x0, [x18]
 ; SEND-NEXT:  ldrsb w0, [x0, #5]
 ; ANNOT-LABEL: HBNG_ldrsb_imm_annot:
-; ANNOT-NEXT:  .ascii "W0 <- [<X0> + 1*Imm(5)]_8 loa X0 loa Imm(5)\n"
+; ANNOT-NEXT:  .ascii "W0 <- [<X0> + 1*Imm(5)]_8\n"
 
 ; Pair: the base is sent once per register; the second register is 8 bytes on.
 ; SEND-LABEL: pair:
 ; SEND:       stp x0, x0, [x18]
 ; SEND-NEXT:  ldp x8, x9, [x0]
 ; ANNOT-LABEL: HBNG_pair_annot:
-; ANNOT-NEXT:  .ascii "X8 <- [<X0> + 8*Imm(0)]_64 loa X0 loa Imm(0)\n"
-; ANNOT-NEXT:  .ascii "X9 <- [<X0> + 8*Imm(0) + 8]_64 loa X0 loa Imm(0)\n"
+; ANNOT-NEXT:  .ascii "X8 <- [<X0> + 8*Imm(0)]_64\n"
+; ANNOT-NEXT:  .ascii "X9 <- [<X0> + 8*Imm(0) + 8]_64\n"
 
-; Post-indexed: the address is the base; the write-back adds the byte offset.
+; Post-indexed: the address is the base. The write-back leaves the base's tag
+; unchanged and the base is sent again at its next access: no line.
 ; SEND-LABEL: copy_post:
 ; SEND:       str x1, [x18]
 ; SEND-NEXT:  ldr x8, [x1], #8
 ; SEND:       str x0, [x18]
 ; SEND-NEXT:  str x8, [x0], #8
-; ANNOT:       .ascii "X8 <- [<X1> + Imm(0)]_64 loa X1 loa Imm(8)\n"
-; ANNOT-NEXT:  .ascii "X1 <- X1 loa Imm(8)\n"
-; ANNOT:       .ascii "[<X0> + Imm(0)]_64 <- X8 sto X0 sto Imm(8)\n"
-; ANNOT-NEXT:  .ascii "X0 <- X0 sto Imm(8)\n"
+; ANNOT-LABEL: HBNG_copy_post_n_1_annot:
+; ANNOT-NEXT:  .ascii "X8 <- [<X1> + Imm(0)]_64\n"
+; ANNOT-NEXT:  .ascii "X2 <- X2 ari Imm(1)\n"
+; ANNOT-NEXT:  .ascii "[<X0> + Imm(0)]_64 <- X8\n"
+; ANNOT-NEXT:  .ascii "END\n"
 
 ; 128-bit post-indexed load: the base is sent, not the loaded Q register.
 ; SEND-LABEL: vmax_post:
@@ -64,17 +66,15 @@
 ; SEND-NEXT:  ldr q0, [x0]
 ; SEND:       str x0, [x18]
 ; SEND-NEXT:  ldr q1, [x0], #16
-; ANNOT:       .ascii "Q1 <- [<X0> + Imm(0)]_128 loa X0 loa Imm(16)\n"
-; ANNOT-NEXT:  .ascii "X0 <- X0 loa Imm(16)\n"
+; ANNOT:       .ascii "Q1 <- [<X0> + Imm(0)]_128\n"
+; ANNOT-NOT:   X0 <-
 
 ; Pre-indexed stack spill: byte offset, unscaled; post-indexed reload: the
 ; address is SP itself.
 ; ANNOT-LABEL: HBNG_spill_pre_annot:
-; ANNOT-NEXT:  .ascii "[<SP> + Imm(-16)]_64 <- LR sto SP sto Imm(-16)\n"
-; ANNOT-NEXT:  .ascii "SP <- SP sto Imm(-16)\n"
+; ANNOT-NEXT:  .ascii "[<SP> + Imm(-16)]_64 <- LR\n"
 ; ANNOT-LABEL: HBNG_spill_pre_split_0_annot:
-; ANNOT-NEXT:  .ascii "LR <- [<SP> + Imm(0)]_64 loa SP loa Imm(16)\n"
-; ANNOT-NEXT:  .ascii "SP <- SP loa Imm(16)\n"
+; ANNOT-NEXT:  .ascii "LR <- [<SP> + Imm(0)]_64\n"
 
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "aarch64-unknown-linux-musl"

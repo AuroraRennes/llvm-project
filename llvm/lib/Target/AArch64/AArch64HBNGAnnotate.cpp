@@ -264,11 +264,14 @@ std::vector<std::string> AArch64HBNGAnnotate::genLinkAnnotation() {
 }
 
 // Annotations of a load or store, in the form (one line per data register,
-// then the base write-back, then the store-exclusive status):
-//   Rt <- [<Rn> + Off + k]_Bits loa Rn loa Off      (load)
-//   [<Rn> + Off + k]_Bits <- Rt sto Rn sto Off      (store)
-//   Rn <- Rn loa Off                                (pre/post write-back)
+// then the store-exclusive status):
+//   Rt <- [<Rn> + Off + k]_Bits                     (load)
+//   [<Rn> + Off + k]_Bits <- Rt                     (store)
 //   Ws <- Imm(0)                                    (store-exclusive status)
+// No pointer tainting: the tags of the address registers do not reach the
+// data. A pre/post-indexed write-back adds an immediate to the base, which
+// leaves its tag unchanged, so it needs no line; the base is sent again at its
+// next access.
 // Off is in bytes: "S*Imm(i)" for an immediate in units of the access size S,
 // "Imm(i)" for a byte immediate, "<Rm> ext amount" for a register offset, and
 // "Imm(0)" for a post-indexed access (the address is the base before the
@@ -277,10 +280,9 @@ std::vector<std::string> AArch64HBNGAnnotate::genLinkAnnotation() {
 std::vector<std::string> AArch64HBNGAnnotate::genMemAnnotation(
     MachineInstr &MI, const HBNGMemAccess &A) {
   std::vector<std::string> Annotations;
-  StringRef Op = A.IsStore ? "sto" : "loa";
   MachineOperand &Base = MI.getOperand(A.Base);
 
-  // The offset as written in the instruction (also used for the write-back).
+  // The offset as written in the instruction.
   std::string Off;
   raw_string_ostream OSOff(Off);
   if (A.Offset < 0) {
@@ -325,23 +327,6 @@ std::vector<std::string> AArch64HBNGAnnotate::genMemAnnotation(
       printStrOperand(Rt, OS);
       OS << " <- " << Addr;
     }
-    OS << " " << Op << " ";
-    printStrOperand(Base, OS);
-    if (A.Offset >= 0) {
-      OS << " " << Op << " ";
-      printStrOperand(MI.getOperand(A.Offset), OS);
-    }
-    LLVM_DEBUG(dbgs() << Result << "\n");
-    Annotations.push_back(Result + "\n");
-  }
-
-  if (A.hasWriteback()) {
-    std::string Result;
-    raw_string_ostream OS(Result);
-    printStrOperand(Base, OS);
-    OS << " <- ";
-    printStrOperand(Base, OS);
-    OS << " " << Op << " " << Off;
     LLVM_DEBUG(dbgs() << Result << "\n");
     Annotations.push_back(Result + "\n");
   }
