@@ -65,6 +65,14 @@ INITIALIZE_PASS(AArch64HBNGSendToSTM, DEBUG_TYPE, "HardBlare-NG Send to STM pass
 // pair). A W register offset is sent as its X register. The registers are
 // sent two by two with STP, the second one at the lower address, which the STM
 // emits first, or alone with STR.
+//
+// The sends of a store-exclusive go right after it instead: before, they would
+// be explicit stores between the load-exclusive and the store-exclusive, which
+// the architecture allows to clear the exclusive monitor, so the store could
+// fail on every retry. After it, they keep their order among the sends (the
+// base register is unchanged: the status register cannot be the base), and a
+// failed store-exclusive that loops back runs its send again with its
+// annotation.
 void AArch64HBNGSendToSTM::insertStoreForAddressOperand(
     MachineBasicBlock &MBB, MachineInstr &MI, const HBNGMemAccess &A) {
     LLVM_DEBUG(dbgs() << "Setting STM send for instruction: "
@@ -86,15 +94,19 @@ void AArch64HBNGSendToSTM::insertStoreForAddressOperand(
     for (unsigned I = 0; I < A.NumData; ++I)
         Sends.append(AddrRegs.begin(), AddrRegs.end());
 
+    MachineBasicBlock::iterator Where = MI.getIterator();
+    if (A.Status >= 0) // store-exclusive
+        Where = std::next(Where);
+
     for (unsigned I = 0; I < Sends.size(); I += 2) {
         if (I + 1 < Sends.size())
-            BuildMI(MBB, MI, MI.getDebugLoc(), TII->get(AArch64::STPXi))
+            BuildMI(MBB, Where, MI.getDebugLoc(), TII->get(AArch64::STPXi))
                 .addReg(Sends[I + 1])
                 .addReg(Sends[I])
                 .addReg(TARGET_REG)
                 .addImm(0);
         else
-            BuildMI(MBB, MI, MI.getDebugLoc(), TII->get(AArch64::STRXui))
+            BuildMI(MBB, Where, MI.getDebugLoc(), TII->get(AArch64::STRXui))
                 .addReg(Sends[I])
                 .addReg(TARGET_REG)
                 .addImm(0);
@@ -125,16 +137,18 @@ bool AArch64HBNGSendToSTM::runOnMachineFunction(MachineFunction &MF) {
     LLVM_DEBUG(dbgs() << "func: " << MF.getName() << "\n");
     for (auto &MBB : MF) {
         LLVM_DEBUG(dbgs() << "block: " << MF.getName() << "\n");
-        for (auto MI = MBB.begin(); MI != MBB.end(); ++MI) {
+        // Early increment: the sends inserted after an instruction are not
+        // visited (they are stores themselves).
+        for (MachineInstr &MI : make_early_inc_range(MBB)) {
             // Only the loads/stores the annotation pass describes
-            std::optional<HBNGMemAccess> A = getHBNGMemAccess(*MI);
+            std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI);
             if (!A)
                 continue;
 
             // Add the store to STM
-            insertStoreForAddressOperand(MBB, *MI, *A);
+            insertStoreForAddressOperand(MBB, MI, *A);
             Changed = true;
-      }
+        }
     }
 
     return Changed;

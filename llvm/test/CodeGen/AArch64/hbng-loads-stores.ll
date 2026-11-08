@@ -6,12 +6,13 @@
 ; RUN: llc -mtriple=aarch64-linux-musl -O2 < %s | FileCheck %s --check-prefix=ANNOT
 
 ; Store-exclusive: the base is the last operand, the status register is
-; written with an untainted value.
+; written with an untainted value, and the send comes after the instruction
+; (see hbng-exclusive.ll).
 ; SEND-LABEL: excl_add:
 ; SEND:       str x8, [x26]
 ; SEND-NEXT:  ldaxr x0, [x8]
-; SEND:       str x8, [x26]
-; SEND-NEXT:  stlxr w10, x9, [x8]
+; SEND:       stlxr w10, x9, [x8]
+; SEND-NEXT:  str x8, [x26]
 ; ANNOT-LABEL: HBNG_excl_add_n_1_annot:
 ; ANNOT-NEXT:  .ascii "X0 <- [<X8> + Imm(0)]_64 loa X8\n"
 ; ANNOT-NEXT:  .ascii "X9 <- X0 add X1\n"
