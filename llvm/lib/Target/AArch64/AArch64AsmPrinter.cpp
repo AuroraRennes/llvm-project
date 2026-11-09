@@ -1176,6 +1176,8 @@ void AArch64AsmPrinter::emitHBNGAnnotationSection(Module &M) {
   if (!HBNGAnnotationInfos.empty()) {
     OutStreamer->switchSection(OutContext.getObjectFileInfo()->getHBNGAnnotationSection());
     for (auto &AnnotationInfo : HBNGAnnotationInfos) {
+      if (AnnotationInfo.Annotations.empty())
+        continue; // a block with no instruction
       OutStreamer->emitLabel(AnnotationInfo.BBAnnotSymbol);
       for (std::string Annotation : AnnotationInfo.Annotations) {
         OutStreamer->emitBytes(Annotation);
@@ -1189,6 +1191,10 @@ void AArch64AsmPrinter::emitHBNGBasicBlockTableSection() {
   if (!HBNGAnnotationInfos.empty()) {
     OutStreamer->switchSection(OutContext.getObjectFileInfo()->getHBNGBasicBlockTableSection());
      for (auto &AnnotationInfo : HBNGAnnotationInfos) {
+      // A block with no instruction has no text and no entry: its address is
+      // the next block's.
+      if (AnnotationInfo.Annotations.empty())
+        continue;
       MCSymbol *Sym = AnnotationInfo.BBSymbol;
       MCSymbol *AnnotSym = AnnotationInfo.BBAnnotSymbol;
       LLVM_DEBUG(dbgs() << "Symbol: " << Sym->getName() << " is defined: " << Sym->isDefined() << "\n");

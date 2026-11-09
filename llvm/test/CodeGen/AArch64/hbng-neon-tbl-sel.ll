@@ -9,23 +9,33 @@
 
 ; tbl v0.16b, { v0.16b }, v1.16b
 ; CHECK-LABEL: HBNG_tbl1_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- tbl Q0 idx Q1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; tbl v0.8b, { v0.16b, v1.16b }, v2.8b
 ; CHECK-LABEL: HBNG_tbl2_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- tbl Q0 Q1 idx D2\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; tbl v0.16b, { v0.16b, v1.16b, v2.16b, v3.16b }, v4.16b
 ; CHECK-LABEL: HBNG_tbl4_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- tbl Q0 Q1 Q2 Q3 idx Q4\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; tbx v0.16b, { v1.16b }, v2.16b
 ; CHECK-LABEL: HBNG_tbx_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Unsupported: TBXv16i8One\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; bsl v0.16b, v1.16b, v2.16b
 ; CHECK-LABEL: HBNG_bsl_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- sel Q1 Q2 mask Q0\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 
 define <16 x i8> @tbl1(<16 x i8> %t, <16 x i8> %i) {

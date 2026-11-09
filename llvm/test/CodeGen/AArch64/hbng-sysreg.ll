@@ -4,9 +4,13 @@
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; CHECK-LABEL: HBNG_tp_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "X0 <- Imm(0)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_fence_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 
 define ptr @tp() {

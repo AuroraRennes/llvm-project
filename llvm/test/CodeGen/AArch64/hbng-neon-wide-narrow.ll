@@ -7,68 +7,99 @@
 
 ; ushll v0.4s, v0.4h, #3
 ; CHECK-LABEL: HBNG_ushll_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- D0 shi.wid.2.4 Imm(3)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; ushll2 v0.4s, v0.8h, #3
 ; CHECK-LABEL: HBNG_ushll2_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- V0[8:15] shi.wid.2.4 Imm(3)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; ushll v0.8h, v0.8b, #0
 ; CHECK-LABEL: HBNG_uxtl_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- D0 shi.wid.1.2 Imm(0)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; ushll2 v0.8h, v0.16b, #0
 ; CHECK-LABEL: HBNG_uxtl2_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- V0[8:15] shi.wid.1.2 Imm(0)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; sshll v0.2d, v0.2s, #0
 ; CHECK-LABEL: HBNG_sxtl_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- D0 shi.wid.4.8 Imm(0)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; shll v0.4s, v0.4h, #16
 ; CHECK-LABEL: HBNG_shll_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- D0 shi.wid.2.4\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; shll2 v0.4s, v0.8h, #16
 ; CHECK-LABEL: HBNG_shll2_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- V0[8:15] shi.wid.2.4\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; umull v0.2d, v0.2s, v1.2s
 ; CHECK-LABEL: HBNG_umull_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- D0 ari.wid.4.8 D1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; umull2 v0.2d, v0.4s, v1.4s
 ; CHECK-LABEL: HBNG_umull2_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- V0[8:15] ari.wid.4.8 V1[8:15]\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; saddl v0.8h, v1.8b, v0.8b
 ; CHECK-LABEL: HBNG_saddl_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- D1 add.wid.1.2 D0\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; xtn v0.8b, v0.8h
 ; CHECK-LABEL: HBNG_xtn_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- Q0 mov.nar.2.1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; xtn v0.4h, v0.4s
 ; CHECK-LABEL: HBNG_xtn4h_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- Q0 mov.nar.4.2\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; xtn2 v0.16b, v1.8h
 ; CHECK-LABEL: HBNG_xtn2_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- Q1 mov.nar.2.1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; shrn v0.8b, v0.8h, #3
 ; CHECK-LABEL: HBNG_shrn_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- Q0 shi.nar.2.1 Imm(3)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; sqxtn v0.4h, v0.4s
 ; CHECK-LABEL: HBNG_sqxtn_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- Q0 ari.nar.4.2\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 
 ; The accumulating long forms read a destination of the output element size
 ; with sources of the input size; not described yet, they stay unsupported.
 ; CHECK-LABEL: HBNG_umlal_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Unsupported: UMLALv2i32_v2i64\n"
 
 define <4 x i32> @ushll(<4 x i16> %a) {

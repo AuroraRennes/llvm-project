@@ -6,31 +6,47 @@
 
 ; addp v0.4s, v0.4s, v1.4s
 ; CHECK-LABEL: HBNG_addp_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 pair.4 Q1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; umaxp v0.8b, v0.8b, v1.8b
 ; CHECK-LABEL: HBNG_umaxp_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- D0 pair.1 D1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; addp d0, v0.2d ; fmov x0, d0
 ; CHECK-LABEL: HBNG_addpd_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- Q0 red\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "X0 <- D0 mov\n"
+; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; addv s0, v0.4s ; fmov w0, s0
 ; CHECK-LABEL: HBNG_addv_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "S0 <- Q0 red\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "W0 <- S0 mov\n"
+; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; umaxv b0, v0.8b ; fmov w0, s0
 ; CHECK-LABEL: HBNG_umaxv8_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "B0 <- D0 red\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "W0 <- S0 mov\n"
+; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; uaddlv h0, v0.16b ; fmov w0, s0
 ; CHECK-LABEL: HBNG_uaddlv_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "H0 <- Q0 red\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "W0 <- S0 mov\n"
+; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 
 define <4 x i32> @addp(<4 x i32> %a, <4 x i32> %b) {

@@ -52,8 +52,14 @@ public:
       initializeAArch64HBNGAnnotatePass(*PassRegistry::getPassRegistry());
     }
 
-    // Generate annotations for all instructions in a given machine function
+    // The groups of MI, one per instruction it is encoded as (none for a
+    // pseudo that emits nothing), each the lines of that instruction.
+    std::vector<std::vector<std::string>> generateGroups(MachineInstr &MI);
+    std::vector<std::vector<std::string>> genInlineAsmGroups(MachineInstr &MI);
+    std::vector<std::string> genSendLines(MachineInstr &MI);
+    // The lines of an instruction encoded as one instruction.
     std::vector<std::string> generateAnnotation(MachineInstr &MI);
+    std::vector<std::string> genTrackedLines(MachineInstr &MI);
     std::vector<std::string> generateTagAnnotation(MachineInstr &MI);
 
     // Main entrypoint for LLVM backend passes
@@ -855,6 +861,84 @@ std::vector<std::string> AArch64HBNGAnnotate::genMemAnnotation(
 //===----------------------------------------------------------------------===//
 // Main annotation generation function
 
+// A send: one line per FIFO entry, in the order the STM emits them. A pair
+// "stp a, b, [x18]" stores a at the lower address and b at the higher one,
+// and the STM emits the higher address first: "send b", then "send a".
+std::vector<std::string> AArch64HBNGAnnotate::genSendLines(MachineInstr &MI) {
+  std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI);
+  std::vector<std::string> Lines;
+  for (unsigned I = A->NumData; I-- > 0;) {
+    Register R = getHBNGDataReg(MI, *A, I, TRI);
+    Lines.push_back("send X" + std::to_string(TRI->getEncodingValue(R)) +
+                    "\n");
+  }
+  return Lines;
+}
+
+// Inline asm, one group per instruction: svc for a system call; any other
+// instruction is not described, so it is reported like an unsupported opcode
+// rather than dropped. An empty statement (a compiler barrier) has no group.
+// A system register access and a barrier are described as their opcodes are:
+// msr and barriers annotate nothing, and mrs gives a clean value when the
+// statement is the whole asm and has one output register (otherwise which
+// output it writes is not known here).
+std::vector<std::vector<std::string>>
+AArch64HBNGAnnotate::genInlineAsmGroups(MachineInstr &MI) {
+  SmallVector<std::string, 4> Mnemonics = getInlineAsmMnemonics(MI);
+  SmallVector<Register, 2> Outs;
+  for (const MachineOperand &MO : MI.operands())
+    if (MO.isReg() && MO.isDef() && !MO.isImplicit()) // not a clobber
+      Outs.push_back(MO.getReg());
+  std::vector<std::vector<std::string>> Groups;
+  for (const std::string &Mnemonic : Mnemonics) {
+    if (Mnemonic == "svc")
+      Groups.push_back({"SVC\n"});
+    else if (is_contained({"msr", "dmb", "dsb", "isb", "nop"}, Mnemonic))
+      Groups.push_back({});
+    else if (Mnemonic == "mrs" && Mnemonics.size() == 1 && Outs.size() == 1)
+      Groups.push_back({TRI->getRegAsmName(Outs[0]).str() + " <- Imm(0)\n"});
+    else
+      Groups.push_back({"Unsupported: INLINEASM " + Mnemonic + "\n"});
+  }
+  return Groups;
+}
+
+std::vector<std::vector<std::string>>
+AArch64HBNGAnnotate::generateGroups(MachineInstr &MI) {
+  if (MI.isMetaInstruction() || MI.getOpcode() == AArch64::HBNG_ATOM_LABEL)
+    return {};
+  if (MI.isInlineAsm()) {
+    std::vector<std::vector<std::string>> Groups = genInlineAsmGroups(MI);
+    // The registers it writes are known once the statement is done.
+    std::vector<std::string> Values = genTrackedLines(MI);
+    if (!Groups.empty())
+      Groups.back().insert(Groups.back().end(), Values.begin(), Values.end());
+    return Groups;
+  }
+  // The sends are not part of the program: the coprocessor receives them.
+  if (isHBNGSend(MI))
+    return {genSendLines(MI)};
+  switch (MI.getOpcode()) {
+  // adr, ldr(b|h|sw) and add (the AsmPrinter's lowering), not described.
+  case AArch64::JumpTableDest32:
+  case AArch64::JumpTableDest16:
+  case AArch64::JumpTableDest8:
+    return {{}, {}, {}};
+  default:
+    break;
+  }
+  unsigned Size = TII->getInstSizeInBytes(MI);
+  if (Size == 0)
+    return {};
+  if (Size == 4)
+    return {generateAnnotation(MI)};
+  // A pseudo expanded at emission into several instructions: its size is an
+  // upper bound, so the groups may not line up with the code.
+  std::vector<std::vector<std::string>> Groups(Size / 4);
+  Groups[0] = {"Unsupported: " + TII->getName(MI.getOpcode()).str() + "\n"};
+  return Groups;
+}
+
 // The annotations of MI: its tag lines (generateTagAnnotation), then the
 // values of the tracked registers it writes (SP, FP, see isHBNGTrackedReg):
 //   <Dst> <- <Src> + Imm(b)       immediate update from a tracked register
@@ -865,9 +949,15 @@ std::vector<std::string> AArch64HBNGAnnotate::genMemAnnotation(
 // with b in bytes (negative for SUB). The write-back of an access based on a
 // tracked register is described with the access (genMemAnnotation).
 std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &MI) {
-  if (isHBNGSend(MI))
-    return {};
   std::vector<std::string> Annotations = generateTagAnnotation(MI);
+  std::vector<std::string> Values = genTrackedLines(MI);
+  Annotations.insert(Annotations.end(), Values.begin(), Values.end());
+  return Annotations;
+}
+
+// The lines of the tracked registers MI writes (see generateAnnotation).
+std::vector<std::string> AArch64HBNGAnnotate::genTrackedLines(MachineInstr &MI) {
+  std::vector<std::string> Annotations;
   if (std::optional<HBNGTrackedUpdate> U = getHBNGTrackedImmUpdate(MI))
     Annotations.push_back(genTrackedValueLine(U->Dst, U->Src, U->Imm));
   if (std::optional<HBNGSPWrite> W = getHBNGSPWrite(MI, TRI))
@@ -884,10 +974,6 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
   std::string Unsupported;
   raw_string_ostream OS(Unsupported);
   OS << "Unsupported: " << TII->getName(MI.getOpcode());
-
-  // The sends are not part of the program: the coprocessor receives them.
-  if (isHBNGSend(MI))
-    return {};
 
   if (TII->isGPRZero(MI)) {
     return genZero(MI);
@@ -1122,33 +1208,6 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::FCCMPESrr: case AArch64::FCCMPEDrr:
       break;
 
-    // Ignore
-    // Inline asm: SVC for a system call; any other instruction is not
-    // described, so it is reported like an unsupported opcode rather than
-    // dropped. An empty statement (a compiler barrier) annotates nothing.
-    // A system register access and a barrier are described as their opcodes
-    // are: msr and barriers annotate nothing, and mrs gives a clean value
-    // when the statement is the whole asm and has one output register
-    // (otherwise which output it writes is not known here).
-    case AArch64::INLINEASM: {
-      SmallVector<std::string, 4> Mnemonics = getInlineAsmMnemonics(MI);
-      SmallVector<Register, 2> Outs;
-      for (const MachineOperand &MO : MI.operands())
-        if (MO.isReg() && MO.isDef() && !MO.isImplicit()) // not a clobber
-          Outs.push_back(MO.getReg());
-      for (const std::string &Mnemonic : Mnemonics) {
-        if (Mnemonic == "svc")
-          Annotations.push_back("SVC\n");
-        else if (is_contained({"msr", "dmb", "dsb", "isb", "nop"}, Mnemonic))
-          continue;
-        else if (Mnemonic == "mrs" && Mnemonics.size() == 1 && Outs.size() == 1)
-          Annotations.push_back(TRI->getRegAsmName(Outs[0]).str() +
-                                " <- Imm(0)\n");
-        else
-          Annotations.push_back("Unsupported: INLINEASM " + Mnemonic + "\n");
-      }
-      break;
-    }
     // A system register carries no tag (like the flags): its value is not
     // data the program read or received (thread pointer, FPCR/FPSR, counters).
     case AArch64::MRS:
@@ -1225,19 +1284,30 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
 
 
       unsigned SplitIndex = 0;
+      // The byte offset of the next instruction in the current block.
+      unsigned Offset = 0;
+      // A block's text is its groups, "@<offset>" and the lines of the
+      // instruction at that offset, closed by END. A block with no
+      // instruction (only pseudos that emit nothing) has no text: the block
+      // table leaves it out (see emitHBNGBasicBlockTableSection).
+      auto Close = [&] {
+        if (Offset)
+          BBAnnotationInfo.Annotations.push_back("END\n");
+        FI->BBAnnotationInfos.push_back(BBAnnotationInfo);
+      };
 
       for (auto MIIt = MBB.begin(), End = MBB.end(); MIIt != End; ++MIIt) {
         MachineInstr &MI = *MIIt;
         unsigned int Opcode = MI.getOpcode();
         StringRef Mnemonic = TII->getName(Opcode);
         LLVM_DEBUG(dbgs() << "instr: " << Mnemonic << "\n");
-        // Main generation function, creates AND STORES the annotation
-        std::vector<std::string> InstrAnnotations = generateAnnotation(MI);
-        BBAnnotationInfo.Annotations.insert(
-          BBAnnotationInfo.Annotations.end(),
-          InstrAnnotations.begin(),
-          InstrAnnotations.end()
-        );
+        for (std::vector<std::string> &Group : generateGroups(MI)) {
+          BBAnnotationInfo.Annotations.push_back("@" + std::to_string(Offset) +
+                                                 "\n");
+          BBAnnotationInfo.Annotations.insert(
+              BBAnnotationInfo.Annotations.end(), Group.begin(), Group.end());
+          Offset += 4;
+        }
 
         // Check if the current instruction is a branch/return/call etc. but the
         // basic block does not end on it. If this is the case, we have to emit
@@ -1246,8 +1316,7 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
         bool IsLastInstr = std::next(MIIt) == End;
         bool IsCtrlFlow = MI.isBranch() || MI.isReturn() || MI.isCall();
         if ((IsCtrlFlow || containsSVC(MI)) && !IsLastInstr) {
-          BBAnnotationInfo.Annotations.push_back("END\n");
-          FI->BBAnnotationInfos.push_back(BBAnnotationInfo);
+          Close();
 
           // Insert the pseudo instruction in the MBB
           BuildMI(MBB, std::next(MIIt), DebugLoc(), TII->get(AArch64::HBNG_ATOM_LABEL));
@@ -1267,21 +1336,16 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
           BBAnnotationInfo.BBSymbol = SplitBBSym;
           BBAnnotationInfo.BBAnnotSymbol = SplitAnnotSym;
           BBAnnotationInfo.Annotations = {};
+          Offset = 0;
 
           LLVM_DEBUG(dbgs() << "Splitting the block, resetting info with: " << SplitBBSym->getName() << " and " << SplitAnnotSym->getName() << "\n");
         }
       }
 
-      // Emit END annotation only if block ends in a branch
-      if (!MBB.empty()) {
-        MachineInstr &LastMI = MBB.back();
-        if (LastMI.isBranch() || LastMI.isReturn() || LastMI.isCall() || containsSVC(LastMI)) {
-          std::string EndAnnotation = "END\n";
-          BBAnnotationInfo.Annotations.push_back(EndAnnotation);
-        }
-      }
-
-      FI->BBAnnotationInfos.push_back(BBAnnotationInfo);
+      // Every block is closed, including one that falls through into the
+      // next: the executor continues at the next block when the last
+      // instruction is not a branch.
+      Close();
     }
 
     // Notify if the content has changed

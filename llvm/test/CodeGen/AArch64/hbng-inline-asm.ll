@@ -6,6 +6,7 @@
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; CHECK-LABEL: HBNG_barrier_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "END\n"
 define void @barrier() {
   call void asm sideeffect "", "~{memory}"()
@@ -22,7 +23,9 @@ define i64 @syscall(i64 %n) {
 
 ; A label, a tab after the mnemonic, a comment and two lines.
 ; CHECK-LABEL: HBNG_ll_sc_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Unsupported: INLINEASM ldaxr\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "Unsupported: INLINEASM stlxr\n"
 ; CHECK-NOT:   SVC
 define i32 @ll_sc(ptr %p, i32 %v) {
@@ -31,6 +34,7 @@ define i32 @ll_sc(ptr %p, i32 %v) {
 }
 
 ; CHECK-LABEL: HBNG_tp_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "X0 <- Imm(0)\n"
 define ptr @tp() {
   %r = call ptr asm "mrs $0, tpidr_el0", "=r"()
@@ -39,8 +43,12 @@ define ptr @tp() {
 
 ; compiler-rt's __fe_raise_inexact: read FPSR, set a flag, write it back.
 ; CHECK-LABEL: HBNG_fpsr_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "X8 <- Imm(0)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "X8 <- X8 log Imm(7936)\n"
+; CHECK-NEXT:  .ascii "@8\n"
+; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "END\n"
 define void @fpsr() {
   %r = call i64 asm sideeffect "mrs $0, fpsr", "=r"()
@@ -51,7 +59,9 @@ define void @fpsr() {
 
 ; Two outputs: which one an mrs writes is not known here.
 ; CHECK-LABEL: HBNG_mrs2_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Unsupported: INLINEASM mrs\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "Unsupported: INLINEASM mrs\n"
 define i64 @mrs2() {
   %r = call { i64, i64 } asm sideeffect "mrs $0, fpcr\0Amrs $1, fpsr", "=r,=r"()
@@ -64,6 +74,7 @@ define i64 @mrs2() {
 ; A directive with a comment mentioning svc is neither an instruction nor a
 ; system call.
 ; CHECK-LABEL: HBNG_directive_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "END\n"
 define void @directive() {
   call void asm sideeffect ".p2align 2 // svc", ""()
@@ -72,7 +83,11 @@ define void @directive() {
 
 ; Statements separated by ';', the barriers annotating nothing.
 ; CHECK-LABEL: HBNG_two_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "Unsupported: INLINEASM fsqrt\n"
+; CHECK-NEXT:  .ascii "@8\n"
+; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "END\n"
 define void @two() {
   call void asm sideeffect "dmb ish; fsqrt d0, d0; isb", "~{d0},~{memory}"()

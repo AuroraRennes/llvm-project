@@ -5,16 +5,22 @@
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; CHECK-LABEL: HBNG_ins_gpr32_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "V0[8:11] <- W0 mov\n"
 ; CHECK-LABEL: HBNG_ins_gpr8_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "V0[5:5] <- W0 mov\n"
 ; CHECK-LABEL: HBNG_ins_lane_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "V0[4:7] <- V1[12:15] mov\n"
 ; CHECK-LABEL: HBNG_bsl_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- sel Q1 Q2 mask Q0\n"
 ; CHECK-LABEL: HBNG_bit_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- sel Q0 Q1 mask Q2\n"
 ; CHECK-LABEL: HBNG_bif_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- sel Q0 Q1 mask Q2\n"
 
 ; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none) uwtable

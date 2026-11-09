@@ -9,85 +9,125 @@
 
 ; add v0.4s, v1.4s, v0.4s
 ; CHECK-LABEL: HBNG_add4_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q1 add.4 Q0\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; add v0.8b, v1.8b, v0.8b
 ; CHECK-LABEL: HBNG_add8b_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- D1 add.1 D0\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; sub v0.2s, v0.2s, v1.2s
 ; CHECK-LABEL: HBNG_sub2_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- D0 sub.4 D1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; add d0, d1, d0
 ; CHECK-LABEL: HBNG_add1d_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- D1 add.8 D0\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; mls v0.2s, v2.2s, v1.2s
 ; CHECK-LABEL: HBNG_mls_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- D0 ari.4 D2 ari.4 D1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; mul v0.2s, v0.2s, v1.s[1]
 ; CHECK-LABEL: HBNG_mulidx_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- D0 ari.4 V1[4:7]\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fmla s0, s1, v2.s[1]
 ; CHECK-LABEL: HBNG_fmla1_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "S0 <- S0 ari.4 S1 ari.4 V2[4:7]\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; smax v0.4s, v0.4s, v1.4s
 ; CHECK-LABEL: HBNG_smax_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 ari.4 Q1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; neg v0.4s, v0.4s
 ; CHECK-LABEL: HBNG_neg_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 ari.4\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fadd v0.4s, v0.4s, v1.4s
 ; CHECK-LABEL: HBNG_fadd_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 add.4 Q1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; shl v0.8b, v0.8b, #2
 ; CHECK-LABEL: HBNG_shl8b_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- D0 shi.1 Imm(2)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; ushr v0.4s, v0.4s, #3
 ; CHECK-LABEL: HBNG_ushr_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 shi.4 Imm(3)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; ushr v0.2d, v0.2d, #7
 ; CHECK-LABEL: HBNG_ushr2d_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 shi.8 Imm(7)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; usra v0.4s, v1.4s, #3
 ; CHECK-LABEL: HBNG_usra_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 shi.4 Q1 shi.4 Imm(3)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; ushl v0.4s, v0.4s, v1.4s
 ; CHECK-LABEL: HBNG_ushl_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 shi.4 Q1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; cnt v0.16b, v0.16b
 ; CHECK-LABEL: HBNG_cnt_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 bit.1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fcvtzs v0.4s, v0.4s
 ; CHECK-LABEL: HBNG_cvt_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 cvt.4\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fcvtzs w0, s0
 ; CHECK-LABEL: HBNG_fcvtzs1_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "W0 <- S0 cvt\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fmaxnm s0, s0, s1
 ; CHECK-LABEL: HBNG_fmaxnm_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "S0 <- S0 ari S1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fcvtzu x0, d0
 ; CHECK-LABEL: HBNG_f2ul_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "X0 <- D0 cvt\n"
 ; fcvtas x0, d0
 ; CHECK-LABEL: HBNG_lround_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "X0 <- D0 cvt\n"
 
 define <4 x i32> @add4(<4 x i32> %a, <4 x i32> %b) {

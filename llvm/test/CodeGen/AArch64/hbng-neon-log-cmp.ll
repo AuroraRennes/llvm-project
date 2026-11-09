@@ -6,43 +6,63 @@
 
 ; and v0.16b, v1.16b, v0.16b
 ; CHECK-LABEL: HBNG_and16_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q1 log Q0\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; eor v0.8b, v1.8b, v0.8b
 ; CHECK-LABEL: HBNG_eor8_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- D1 log D0\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; bic v0.16b, v0.16b, v1.16b
 ; CHECK-LABEL: HBNG_bic16_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 log Q1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; mvn v0.8b, v0.8b
 ; CHECK-LABEL: HBNG_not8_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- D0 log\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; bic v0.4s, #255, lsl #8
 ; CHECK-LABEL: HBNG_bicimm_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 log Imm(255)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; orr v0.4h, #3
 ; CHECK-LABEL: HBNG_orrimm_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- D0 log Imm(3)\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; cmhs v0.4s, v0.4s, v1.4s
 ; CHECK-LABEL: HBNG_cmhs_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 cmp.4 Q1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; cmeq v0.4s, v0.4s, #0
 ; CHECK-LABEL: HBNG_cmeqz_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 cmp.4\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; cmtst v0.8b, v1.8b, v0.8b
 ; CHECK-LABEL: HBNG_cmtst_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- D1 cmp.1 D0\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fcmgt v0.4s, v0.4s, v1.4s
 ; CHECK-LABEL: HBNG_fcmgt_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "Q0 <- Q0 cmp.4 Q1\n"
+; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 
 define <16 x i8> @and16(<16 x i8> %a, <16 x i8> %b) {
