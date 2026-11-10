@@ -70,7 +70,6 @@ public:
     }
 
 private:
-    void printStrOperand(MachineOperand &MO, raw_string_ostream &OS);
     std::optional<std::string> gprLoc(Register R);
     std::string vecRange(Register R, unsigned Lo, unsigned Len);
     std::optional<std::string> srcLoc(Register R);
@@ -86,7 +85,6 @@ private:
                                                  const HBNGMemAccess &A);
     static bool isUnsupported(ArrayRef<std::string> Lines);
     std::optional<std::vector<std::string>> genNeonAnnotation(MachineInstr &MI);
-    std::string vecBytes(Register R, unsigned Lo, unsigned Len, bool Whole);
     std::string vecWhole(Register R);
     std::string byteMap(ArrayRef<Register> Srcs, ArrayRef<unsigned> Map);
     unsigned regBytes(Register R);
@@ -137,17 +135,6 @@ static SmallVector<std::string, 4> getInlineAsmMnemonics(const MachineInstr &MI)
 
 static bool containsSVC(MachineInstr &MI) {
   return llvm::is_contained(getInlineAsmMnemonics(MI), "svc");
-}
-
-void AArch64HBNGAnnotate::printStrOperand(MachineOperand &MO, raw_string_ostream &OS) {
-  if (MO.isReg()) {
-    unsigned Reg = MO.getReg();
-    OS << TRI->getRegAsmName(Reg);
-  } else if (MO.isImm()) {
-    OS << "Imm(" << MO.getImm() << ")";
-  } else {
-    OS << "UOp";
-  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -307,20 +294,6 @@ std::vector<std::string> AArch64HBNGAnnotate::genClear(MachineInstr &MI) {
 //   movi v0.4s, #1                V0[0:15] <- 0
 //
 // A 64-bit form (v0.2s) writes V0[0:7] and clears V0[8:15] on a second line.
-
-// Bytes [Lo, Lo + Len) of the V register R, in a source or destination.
-std::string AArch64HBNGAnnotate::vecBytes(Register R, unsigned Lo, unsigned Len,
-                                          bool Whole) {
-  unsigned N = TRI->getEncodingValue(R);
-  if (Whole) {
-    assert(Lo == 0 && "HBNG: whole register from byte 0");
-    char C = Len == 16 ? 'Q' : Len == 8 ? 'D' : Len == 4 ? 'S' : Len == 2 ? 'H'
-                                                                       : 'B';
-    return C + std::to_string(N);
-  }
-  return "V" + std::to_string(N) + "[" + std::to_string(Lo) + ":" +
-         std::to_string(Lo + Len - 1) + "]";
-}
 
 // Every byte of the V register R.
 std::string AArch64HBNGAnnotate::vecWhole(Register R) {
@@ -851,12 +824,16 @@ AArch64HBNGAnnotate::genAddress(MachineInstr &MI, const HBNGMemAccess &A) {
   return {Base, Off.getImm() * (A.isScaledImm() ? int64_t(A.Size) : 1)};
 }
 
-// Size bytes of memory at Term + Off.
+// Size bytes of memory at Term + Off, or Times elements of Size bytes, Step
+// bytes apart.
 static std::string memBytes(const std::string &Term, int64_t Off,
-                            unsigned Size) {
+                            unsigned Size, unsigned Step = 0,
+                            unsigned Times = 0) {
   std::string S = "M[" + plus(Term, Off);
-  if (Size > 1)
+  if (Size > 1 || Times)
     S += " .. +" + std::to_string(Size);
+  if (Times)
+    S += " step " + std::to_string(Step) + " times " + std::to_string(Times);
   return S + "]";
 }
 
@@ -906,109 +883,53 @@ std::vector<std::string> AArch64HBNGAnnotate::genMemAnnotation(
   return Annotations;
 }
 
-// Annotations of a structured (NEON) load or store, in the form (one line per
-// data register, then the write-back of a tracked base):
-//   Rt <- [<Rn> + Off + k]_Bits                     (load)
-//   [<Rn> + Off + k]_Bits <- Rt                     (store)
-//   <Rn> <- <Rn> + Imm(b)                           (write-back of SP or FP)
-//   Ws <- Imm(0)                                    (store-exclusive status)
-// No pointer tainting: the tags of the address registers do not reach the
-// data. The write-back leaves the tag of the base unchanged (an immediate is
-// added), so it needs a line only for a tracked base, whose value it updates
-// (b in bytes); any other base is sent at its next access.
-// Off is in bytes: "S*Imm(i)" for an immediate in units of the access size S,
-// "Imm(i)" for a byte immediate, "<Rm> ext amount" for a register offset, and
-// "Imm(0)" for a post-indexed access (the address is the base before the
-// write-back). k is the byte offset of the second register of a pair. Bits is
-// the width of one data register's access.
+// Annotations of a structured (NEON) load or store: one line per data
+// register, byte for byte, then the write-back of a tracked base (see
+// HBNGMemAccess for the forms):
+//   V0[0:15] <- M[<X0> .. +16] per 1                     ld1 {v0.16b}
+//   V1[0:15] <- M[<X0> + 1 .. +1 step 4 times 16] per 1  ld4, register 1
+//   V0[0:15] <- M[<X0> .. +4 step 0 times 4] per 1       ld1r {v0.4s}
+//   V0[8:11] <- M[<X0> .. +4] per 1                      ld1 {v0.s}[2]
+// A load of a 64-bit register clears its upper 8 bytes, a load of a lane
+// keeps the other bytes. The write-back by a register is not described.
 std::vector<std::string> AArch64HBNGAnnotate::genVecMemAnnotation(
     MachineInstr &MI, const HBNGMemAccess &A) {
   std::vector<std::string> Annotations;
-  MachineOperand &Base = MI.getOperand(A.Base);
-
-  // The offset as written in the instruction.
-  std::string Off;
-  raw_string_ostream OSOff(Off);
-  if (A.Offset < 0) {
-    OSOff << "Imm(0)";
-  } else if (A.isRegOffset()) {
-    MachineOperand &Rm = MI.getOperand(A.Offset);
-    bool Signed = MI.getOperand(A.Offset + 1).getImm();
-    bool DoShift = MI.getOperand(A.Offset + 2).getImm();
-    AArch64_AM::ShiftExtendType Ext =
-        A.Mode == HBNGMemAccess::RegOffsetW
-            ? (Signed ? AArch64_AM::SXTW : AArch64_AM::UXTW)
-            : (Signed ? AArch64_AM::SXTX : AArch64_AM::UXTX);
-    OSOff << "<";
-    printStrOperand(Rm, OSOff);
-    OSOff << "> " << AArch64_AM::getShiftExtendName(Ext) << " "
-          << (DoShift ? Log2_32(A.Size) : 0);
-  } else {
-    if (A.isScaledImm())
-      OSOff << A.Size << "*";
-    printStrOperand(MI.getOperand(A.Offset), OSOff);
-  }
-  // The offset added to the base to form the address.
-  std::string AddrOff = A.Mode == HBNGMemAccess::PostIndex ? "Imm(0)" : Off;
-
+  auto [Term, Off] = genAddress(MI, A);
+  unsigned E = A.ElemSize, N = A.RegBytes / E;
   for (unsigned I = 0; I < A.NumData; ++I) {
     Register Rt = getHBNGDataReg(MI, A, I, TRI);
-    // The first byte of register I, the element size and the data register.
-    unsigned First = I * A.Size, Bits = A.Size * 8;
-    std::string Data = TRI->getRegAsmName(Rt).str(), Suffix;
+    std::string Mem, Reg = vecRange(Rt, 0, A.RegBytes);
     switch (A.Vec) {
     case HBNGMemAccess::NotVec:
+      llvm_unreachable("HBNG: not a structured access");
     case HBNGMemAccess::VecMultiple:
+      Mem = memBytes(Term, Off + I * A.RegBytes, A.RegBytes);
       break;
     case HBNGMemAccess::VecInterleaved:
-      First = I * A.ElemSize;
-      Bits = A.ElemSize * 8;
-      Suffix = " step " + std::to_string(A.NumData * A.ElemSize) + " x" +
-               std::to_string(A.RegBytes / A.ElemSize);
+      Mem = memBytes(Term, Off + I * E, E, A.NumData * E, N);
       break;
     case HBNGMemAccess::VecReplicate:
-      Suffix = " rep " + std::to_string(A.RegBytes / A.ElemSize);
+      Mem = memBytes(Term, Off + I * E, E, 0, N);
       break;
-    case HBNGMemAccess::VecLane: {
-      unsigned Lo = MI.getOperand(A.Lane).getImm() * A.ElemSize;
-      Data = vecBytes(Rt, Lo, A.ElemSize, /*Whole=*/false);
+    case HBNGMemAccess::VecLane:
+      Mem = memBytes(Term, Off + I * E, E);
+      Reg = vecRange(Rt, MI.getOperand(A.Lane).getImm() * E, E);
       break;
     }
-    }
-
-    std::string Addr;
-    raw_string_ostream OSAddr(Addr);
-    OSAddr << "[<";
-    printStrOperand(Base, OSAddr);
-    OSAddr << "> + " << AddrOff;
-    if (First)
-      OSAddr << " + " << First;
-    OSAddr << Suffix << "]_" << Bits;
-
-    std::string Result;
-    raw_string_ostream OS(Result);
     if (A.IsStore)
-      OS << Addr << " <- " << Data;
+      Annotations.push_back(Mem + " <- " + Reg + " per 1\n");
+    else if (A.Vec == HBNGMemAccess::VecLane)
+      Annotations.push_back(Reg + " <- " + Mem + " per 1\n");
     else
-      OS << Data << " <- " << Addr;
-    LLVM_DEBUG(dbgs() << Result << "\n");
-    Annotations.push_back(Result + "\n");
+      for (std::string &L : writeReg(Rt, Mem + " per 1"))
+        Annotations.push_back(L);
   }
 
-  if (isHBNGTrackedReg(Base.getReg()))
+  Register Base = MI.getOperand(A.Base).getReg();
+  if (isHBNGTrackedReg(Base))
     if (std::optional<int64_t> Bytes = getHBNGWritebackBytes(MI, A))
-      Annotations.push_back(
-          genTrackedValueLine(Base.getReg(), Base.getReg(), *Bytes));
-
-  if (A.Status >= 0) {
-    std::string Result;
-    raw_string_ostream OS(Result);
-    printStrOperand(MI.getOperand(A.Status), OS);
-    OS << " <- Imm(0)";
-    LLVM_DEBUG(dbgs() << Result << "\n");
-    Annotations.push_back(Result + "\n");
-  }
-
+      Annotations.push_back(genTrackedValueLine(Base, Base, *Bytes));
   return Annotations;
 }
 

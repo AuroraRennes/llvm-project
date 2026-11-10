@@ -1,8 +1,9 @@
 ; NEON structured loads and stores (ld1-ld4, st1-st4), one line per register
-; of the list, each with its send of the base:
+; of the list, byte for byte ("per 1"), each with its send of the base:
 ;  - ld1/st1 of several registers: register r at byte 16r (8r for D);
-;  - ld2-ld4/st2-st4: "+ k step s xN", N elements, the i-th at byte k + i*s;
-;  - ld1r-ld4r: "rep N", one element replicated N times;
+;  - ld2-ld4/st2-st4: register r at byte r * e, "step s times n", n elements
+;    of e bytes, s bytes apart;
+;  - ld1r-ld4r: "step 0 times n", one element replicated n times;
 ;  - one lane: V<n>[lo:hi] for the lane, the other bytes kept.
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s --check-prefix=ASM
@@ -86,8 +87,8 @@
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "Q0 <- [<X0> + Imm(0)]_128\n"
-; CHECK-NEXT:  .ascii "Q1 <- [<X0> + Imm(0) + 16]_128\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- M[<X0> .. +16] per 1\n"
+; CHECK-NEXT:  .ascii "V1[0:15] <- M[<X0> + 16 .. +16] per 1\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_ld1d4_annot:
@@ -98,10 +99,14 @@
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@8\n"
-; CHECK-NEXT:  .ascii "D0 <- [<X0> + Imm(0)]_64\n"
-; CHECK-NEXT:  .ascii "D1 <- [<X0> + Imm(0) + 8]_64\n"
-; CHECK-NEXT:  .ascii "D2 <- [<X0> + Imm(0) + 16]_64\n"
-; CHECK-NEXT:  .ascii "D3 <- [<X0> + Imm(0) + 24]_64\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- M[<X0> .. +8] per 1\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
+; CHECK-NEXT:  .ascii "V1[0:7] <- M[<X0> + 8 .. +8] per 1\n"
+; CHECK-NEXT:  .ascii "V1[8:15] <- 0\n"
+; CHECK-NEXT:  .ascii "V2[0:7] <- M[<X0> + 16 .. +8] per 1\n"
+; CHECK-NEXT:  .ascii "V2[8:15] <- 0\n"
+; CHECK-NEXT:  .ascii "V3[0:7] <- M[<X0> + 24 .. +8] per 1\n"
+; CHECK-NEXT:  .ascii "V3[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_ld2s_annot:
@@ -109,8 +114,8 @@
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "Q0 <- [<X0> + Imm(0) step 8 x4]_32\n"
-; CHECK-NEXT:  .ascii "Q1 <- [<X0> + Imm(0) + 4 step 8 x4]_32\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- M[<X0> .. +4 step 8 times 4] per 1\n"
+; CHECK-NEXT:  .ascii "V1[0:15] <- M[<X0> + 4 .. +4 step 8 times 4] per 1\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_ld3d_annot:
@@ -120,9 +125,12 @@
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@8\n"
-; CHECK-NEXT:  .ascii "D0 <- [<X0> + Imm(0) step 6 x4]_16\n"
-; CHECK-NEXT:  .ascii "D1 <- [<X0> + Imm(0) + 2 step 6 x4]_16\n"
-; CHECK-NEXT:  .ascii "D2 <- [<X0> + Imm(0) + 4 step 6 x4]_16\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- M[<X0> .. +2 step 6 times 4] per 1\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
+; CHECK-NEXT:  .ascii "V1[0:7] <- M[<X0> + 2 .. +2 step 6 times 4] per 1\n"
+; CHECK-NEXT:  .ascii "V1[8:15] <- 0\n"
+; CHECK-NEXT:  .ascii "V2[0:7] <- M[<X0> + 4 .. +2 step 6 times 4] per 1\n"
+; CHECK-NEXT:  .ascii "V2[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_ld4_annot:
@@ -133,17 +141,17 @@
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@8\n"
-; CHECK-NEXT:  .ascii "Q0 <- [<X0> + Imm(0) step 4 x16]_8\n"
-; CHECK-NEXT:  .ascii "Q1 <- [<X0> + Imm(0) + 1 step 4 x16]_8\n"
-; CHECK-NEXT:  .ascii "Q2 <- [<X0> + Imm(0) + 2 step 4 x16]_8\n"
-; CHECK-NEXT:  .ascii "Q3 <- [<X0> + Imm(0) + 3 step 4 x16]_8\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- M[<X0> .. +1 step 4 times 16] per 1\n"
+; CHECK-NEXT:  .ascii "V1[0:15] <- M[<X0> + 1 .. +1 step 4 times 16] per 1\n"
+; CHECK-NEXT:  .ascii "V2[0:15] <- M[<X0> + 2 .. +1 step 4 times 16] per 1\n"
+; CHECK-NEXT:  .ascii "V3[0:15] <- M[<X0> + 3 .. +1 step 4 times 16] per 1\n"
 ; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_ld1r_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "Q0 <- [<X0> + Imm(0) rep 4]_32\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- M[<X0> .. +4 step 0 times 4] per 1\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_ld2r_annot:
@@ -151,22 +159,24 @@
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "D0 <- [<X0> + Imm(0) rep 4]_16\n"
-; CHECK-NEXT:  .ascii "D1 <- [<X0> + Imm(0) + 2 rep 4]_16\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- M[<X0> .. +2 step 0 times 4] per 1\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
+; CHECK-NEXT:  .ascii "V1[0:7] <- M[<X0> + 2 .. +2 step 0 times 4] per 1\n"
+; CHECK-NEXT:  .ascii "V1[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_ld1lane8_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "V0[5:5] <- [<X0> + Imm(0)]_8\n"
+; CHECK-NEXT:  .ascii "V0[5] <- M[<X0>] per 1\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_ld1lane32_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "V0[8:11] <- [<X0> + Imm(0)]_32\n"
+; CHECK-NEXT:  .ascii "V0[8:11] <- M[<X0> .. +4] per 1\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_ld2lane_annot:
@@ -174,15 +184,15 @@
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "V0[6:7] <- [<X0> + Imm(0)]_16\n"
-; CHECK-NEXT:  .ascii "V1[6:7] <- [<X0> + Imm(0) + 2]_16\n"
+; CHECK-NEXT:  .ascii "V0[6:7] <- M[<X0> .. +2] per 1\n"
+; CHECK-NEXT:  .ascii "V1[6:7] <- M[<X0> + 2 .. +2] per 1\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_st1lane_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "[<X0> + Imm(0)]_32 <- V0[8:11]\n"
+; CHECK-NEXT:  .ascii "M[<X0> .. +4] <- V0[8:11] per 1\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_st1x3_annot:
@@ -192,9 +202,9 @@
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@8\n"
-; CHECK-NEXT:  .ascii "[<X0> + Imm(0)]_64 <- D0\n"
-; CHECK-NEXT:  .ascii "[<X0> + Imm(0) + 8]_64 <- D1\n"
-; CHECK-NEXT:  .ascii "[<X0> + Imm(0) + 16]_64 <- D2\n"
+; CHECK-NEXT:  .ascii "M[<X0> .. +8] <- V0[0:7] per 1\n"
+; CHECK-NEXT:  .ascii "M[<X0> + 8 .. +8] <- V1[0:7] per 1\n"
+; CHECK-NEXT:  .ascii "M[<X0> + 16 .. +8] <- V2[0:7] per 1\n"
 ; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_st2d_annot:
@@ -202,8 +212,8 @@
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "[<X0> + Imm(0) step 8 x2]_32 <- D0\n"
-; CHECK-NEXT:  .ascii "[<X0> + Imm(0) + 4 step 8 x2]_32 <- D1\n"
+; CHECK-NEXT:  .ascii "M[<X0> .. +4 step 8 times 2] <- V0[0:7] per 1\n"
+; CHECK-NEXT:  .ascii "M[<X0> + 4 .. +4 step 8 times 2] <- V1[0:7] per 1\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_st4_annot:
@@ -214,10 +224,10 @@
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@8\n"
-; CHECK-NEXT:  .ascii "[<X0> + Imm(0) step 4 x16]_8 <- Q0\n"
-; CHECK-NEXT:  .ascii "[<X0> + Imm(0) + 1 step 4 x16]_8 <- Q1\n"
-; CHECK-NEXT:  .ascii "[<X0> + Imm(0) + 2 step 4 x16]_8 <- Q2\n"
-; CHECK-NEXT:  .ascii "[<X0> + Imm(0) + 3 step 4 x16]_8 <- Q3\n"
+; CHECK-NEXT:  .ascii "M[<X0> .. +1 step 4 times 16] <- V0[0:15] per 1\n"
+; CHECK-NEXT:  .ascii "M[<X0> + 1 .. +1 step 4 times 16] <- V1[0:15] per 1\n"
+; CHECK-NEXT:  .ascii "M[<X0> + 2 .. +1 step 4 times 16] <- V2[0:15] per 1\n"
+; CHECK-NEXT:  .ascii "M[<X0> + 3 .. +1 step 4 times 16] <- V3[0:15] per 1\n"
 ; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "END\n"
 
@@ -230,13 +240,15 @@
 ; ASM:         stp x19, x19, [x18]
 ; ASM-NEXT:    ld2 { v0.4s, v1.4s }, [x19], x1
 ; CHECK-LABEL: HBNG_ld2_post_imm_annot:
-; CHECK:       .ascii "Q0 <- [<X19> + Imm(0) step 8 x4]_32\n"
-; CHECK-NEXT:  .ascii "Q1 <- [<X19> + Imm(0) + 4 step 8 x4]_32\n"
+; CHECK:       .ascii "@12\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- M[<X19> .. +4 step 8 times 4] per 1\n"
+; CHECK-NEXT:  .ascii "V1[0:15] <- M[<X19> + 4 .. +4 step 8 times 4] per 1\n"
 ; CHECK-NEXT:  .ascii "@16\n"
 ; CHECK-NEXT:  .ascii "LR <- 0\n"
 ; CHECK-LABEL: HBNG_ld2_post_reg_annot:
-; CHECK:       .ascii "Q0 <- [<X19> + Imm(0) step 8 x4]_32\n"
-; CHECK-NEXT:  .ascii "Q1 <- [<X19> + Imm(0) + 4 step 8 x4]_32\n"
+; CHECK:       .ascii "@12\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- M[<X19> .. +4 step 8 times 4] per 1\n"
+; CHECK-NEXT:  .ascii "V1[0:15] <- M[<X19> + 4 .. +4 step 8 times 4] per 1\n"
 ; CHECK-NEXT:  .ascii "@16\n"
 ; CHECK-NEXT:  .ascii "LR <- 0\n"
 
