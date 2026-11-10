@@ -257,6 +257,37 @@ std::vector<std::string> AArch64HBNGAnnotate::genDataflow(MachineInstr &MI) {
   return writeReg(MI.getOperand(0).getReg(), unionOf(Srcs));
 }
 
+// An instruction whose result does not depend on its source, read twice:
+// x - x and x ^ x are 0, x & ~x is 0, x | ~x and x ^ ~x are all ones, and
+// x - x - !C is 0 or -1 (the flags carry no tag). Only when the second read
+// is neither shifted nor extended: x - (x << 1) is a value of x.
+static bool cancelsItsSource(const MachineInstr &MI) {
+  switch (MI.getOpcode()) {
+  case AArch64::SUBXrs: case AArch64::SUBWrs:
+  case AArch64::SUBSXrs: case AArch64::SUBSWrs:
+  case AArch64::EORXrs: case AArch64::EORWrs:
+  case AArch64::EONXrs: case AArch64::EONWrs:
+  case AArch64::BICXrs: case AArch64::BICWrs:
+  case AArch64::BICSXrs: case AArch64::BICSWrs:
+  case AArch64::ORNXrs: case AArch64::ORNWrs:
+    if (AArch64_AM::getShiftValue(MI.getOperand(3).getImm()) != 0)
+      return false;
+    [[fallthrough]];
+  case AArch64::SUBXrr: case AArch64::SUBWrr:
+  case AArch64::SUBSXrr: case AArch64::SUBSWrr:
+  case AArch64::EORXrr: case AArch64::EORWrr:
+  case AArch64::EONXrr: case AArch64::EONWrr:
+  case AArch64::BICXrr: case AArch64::BICWrr:
+  case AArch64::BICSXrr: case AArch64::BICSWrr:
+  case AArch64::ORNXrr: case AArch64::ORNWrr:
+  case AArch64::SBCXr: case AArch64::SBCWr:
+  case AArch64::SBCSXr: case AArch64::SBCSWr:
+    return MI.getOperand(1).getReg() == MI.getOperand(2).getReg();
+  default:
+    return false;
+  }
+}
+
 // The destination (operand 0) cleared: a constant, an address from PC, a
 // system register (thread pointer, FPCR/FPSR, counters: not data the program
 // read or received).
@@ -1082,7 +1113,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
   std::string Unsupported =
       "unsupported \"" + TII->getName(MI.getOpcode()).str() + "\"";
 
-  if (TII->isGPRZero(MI))
+  if (TII->isGPRZero(MI) || cancelsItsSource(MI))
     return genClear(MI);
 
   if (std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI))

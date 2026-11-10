@@ -1,0 +1,71 @@
+# An instruction whose two sources are the same register, the second neither
+# shifted nor extended, computes a constant: x - x, x ^ x, x & ~x are 0,
+# x | ~x and x ^ ~x all ones, x - x - !C is 0 or -1. Its destination is
+# cleared. A shift of 0 (even a rotation) is no shift; any other shift, an
+# extension, or two different registers are a flow.
+# RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -start-before=hbng-send-stm %s -o - | FileCheck %s
+
+# CHECK-LABEL: HBNG_cancelling_annot:
+# CHECK-NEXT:  .ascii "@0\n"
+# CHECK-NEXT:  .ascii "X0 <- 0\n"
+# CHECK-NEXT:  .ascii "@4\n"
+# CHECK-NEXT:  .ascii "X1 <- 0\n"
+# CHECK-NEXT:  .ascii "@8\n"
+# CHECK-NEXT:  .ascii "X2 <- 0\n"
+# CHECK-NEXT:  .ascii "@12\n"
+# CHECK-NEXT:  .ascii "X3 <- 0\n"
+# CHECK-NEXT:  .ascii "@16\n"
+# CHECK-NEXT:  .ascii "X4 <- 0\n"
+# CHECK-NEXT:  .ascii "@20\n"
+# CHECK-NEXT:  .ascii "X5 <- 0\n"
+# CHECK-NEXT:  .ascii "@24\n"
+# CHECK-NEXT:  .ascii "X6 <- 0\n"
+# CHECK-NEXT:  .ascii "@28\n"
+# CHECK-NEXT:  .ascii "X7 <- 0\n"
+# CHECK-NEXT:  .ascii "@32\n"
+# CHECK-NEXT:  .ascii "X8 <- 0\n"
+# CHECK-NEXT:  .ascii "@36\n"
+# CHECK-NEXT:  .ascii "X10 <- X9\n"
+# CHECK-NEXT:  .ascii "@40\n"
+# CHECK-NEXT:  .ascii "X11 <- X9\n"
+# CHECK-NEXT:  .ascii "@44\n"
+# CHECK-NEXT:  .ascii "X12 <- X9 | X13\n"
+# CHECK-NEXT:  .ascii "@48\n"
+# CHECK-NEXT:  .ascii "END\n"
+
+--- |
+  target triple = "aarch64-unknown-linux-musl"
+  define void @cancelling() { ret void }
+...
+---
+name: cancelling
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x0, $x1, $x2, $x3, $x4, $x5, $x6, $x7, $x8, $x9, $x13, $nzcv
+    ; sub x0, x0, x0
+    $x0 = SUBXrs $x0, $x0, 0
+    ; subs w1, w1, w1
+    $w1 = SUBSWrs $w1, $w1, 0, implicit-def $nzcv
+    ; eor x2, x2, x2
+    $x2 = EORXrs $x2, $x2, 0
+    ; eon x3, x3, x3, ror #0
+    $x3 = EONXrs $x3, $x3, 192
+    ; bic w4, w4, w4
+    $w4 = BICWrs $w4, $w4, 0
+    ; bics x5, x5, x5
+    $x5 = BICSXrs $x5, $x5, 0, implicit-def $nzcv
+    ; orn x6, x6, x6
+    $x6 = ORNXrs $x6, $x6, 0
+    ; sbc x7, x7, x7
+    $x7 = SBCXr $x7, $x7, implicit $nzcv
+    ; sbcs w8, w8, w8
+    $w8 = SBCSWr $w8, $w8, implicit-def $nzcv, implicit $nzcv
+    ; eor x10, x9, x9, lsl #1: a value of x9
+    $x10 = EORXrs $x9, $x9, 1
+    ; sub x11, x9, w9, uxtw: a value of x9
+    $x11 = SUBXrx $x9, $w9, 16
+    ; sub x12, x9, x13: a flow
+    $x12 = SUBXrs $x9, $x13, 0
+    RET undef $lr
+...
