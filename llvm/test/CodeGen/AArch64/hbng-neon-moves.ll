@@ -38,7 +38,7 @@
 ; fmov x0, d0
 ; CHECK-LABEL: HBNG_umov64_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "X0 <- D0 mov\n"
+; CHECK-NEXT:  .ascii "X0 <- V0[0:7]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; smov x0, v0.h[5]
@@ -50,7 +50,8 @@
 ; mov s0, v0.s[2]
 ; CHECK-LABEL: HBNG_dups_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "S0 <- V0[8:11] mov\n"
+; CHECK-NEXT:  .ascii "V0[0:3] <- V0[8:11]\n"
+; CHECK-NEXT:  .ascii "V0[4:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; dup v0.16b, w0
@@ -68,13 +69,14 @@
 ; fmov s0, w0
 ; CHECK-LABEL: HBNG_fmovws_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "S0 <- W0 mov\n"
+; CHECK-NEXT:  .ascii "V0[0:3] <- X0\n"
+; CHECK-NEXT:  .ascii "V0[4:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fmov x0, d0
 ; CHECK-LABEL: HBNG_fmovxd_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "X0 <- D0 mov\n"
+; CHECK-NEXT:  .ascii "X0 <- V0[0:7]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; mov v0.d[1], x0

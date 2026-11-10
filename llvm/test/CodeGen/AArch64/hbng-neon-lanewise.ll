@@ -112,23 +112,24 @@
 ; fcvtzs w0, s0
 ; CHECK-LABEL: HBNG_fcvtzs1_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "W0 <- S0 cvt\n"
+; CHECK-NEXT:  .ascii "X0 <- V0[0:3]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fmaxnm s0, s0, s1
 ; CHECK-LABEL: HBNG_fmaxnm_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "S0 <- S0 ari S1\n"
+; CHECK-NEXT:  .ascii "V0[0:3] <- V0[0:3] | V1[0:3]\n"
+; CHECK-NEXT:  .ascii "V0[4:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fcvtzu x0, d0
 ; CHECK-LABEL: HBNG_f2ul_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "X0 <- D0 cvt\n"
+; CHECK-NEXT:  .ascii "X0 <- V0[0:7]\n"
 ; fcvtas x0, d0
 ; CHECK-LABEL: HBNG_lround_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "X0 <- D0 cvt\n"
+; CHECK-NEXT:  .ascii "X0 <- V0[0:7]\n"
 
 define <4 x i32> @add4(<4 x i32> %a, <4 x i32> %b) {
 entry:

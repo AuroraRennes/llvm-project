@@ -8,7 +8,7 @@
 ; CHECK-LABEL: HBNG_is_five_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "W0 <- WZR cse WZR\n"
+; CHECK-NEXT:  .ascii "X0 <- 0\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 define i32 @is_five(i32 %x) {
@@ -19,8 +19,9 @@ define i32 @is_five(i32 %x) {
 
 ; fcmp + csel: the selected values only.
 ; CHECK-LABEL: HBNG_fsel_annot:
-; CHECK-NOT:   NZCV
-; CHECK:       .ascii "X0 <- X0 cse X1\n"
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "X0 <- X0 | X1\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 define i64 @fsel(double %a, double %b, i64 %x, i64 %y) {
@@ -32,9 +33,9 @@ define i64 @fsel(double %a, double %b, i64 %x, i64 %y) {
 ; adds/adc (128-bit add): no carry, no flags.
 ; CHECK-LABEL: HBNG_add128_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "X0 <- X0 add X2\n"
+; CHECK-NEXT:  .ascii "X0 <- X0 | X2\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "X1 <- X1 ari X3\n"
+; CHECK-NEXT:  .ascii "X1 <- X1 | X3\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 define i128 @add128(i128 %a, i128 %b) {
@@ -45,9 +46,9 @@ define i128 @add128(i128 %a, i128 %b) {
 ; add immediate and a register shift: no flags, no carry.
 ; CHECK-LABEL: HBNG_addshift_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "X8 <- X0 add Imm(7)\n"
+; CHECK-NEXT:  .ascii "X8 <- X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "X0 <- X8 shi X1\n"
+; CHECK-NEXT:  .ascii "X0 <- X8 | X1\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 define i64 @addshift(i64 %a, i64 %s) {
@@ -58,7 +59,7 @@ define i64 @addshift(i64 %a, i64 %s) {
 
 ; A call: LR is clean, no tag into PC.
 ; CHECK-LABEL: HBNG_call_annot:
-; CHECK:       .ascii "LR <- Imm(0)\n"
+; CHECK:       .ascii "LR <- 0\n"
 ; CHECK-NOT:   "PC <-
 ; CHECK:       .ascii "END\n"
 declare void @f()

@@ -100,7 +100,7 @@
 ; with sources of the input size; not described yet, they stay unsupported.
 ; CHECK-LABEL: HBNG_umlal_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Unsupported: UMLALv2i32_v2i64\n"
+; CHECK-NEXT:  .ascii "unsupported \"UMLALv2i32_v2i64\"\n"
 
 define <4 x i32> @ushll(<4 x i16> %a) {
 entry:

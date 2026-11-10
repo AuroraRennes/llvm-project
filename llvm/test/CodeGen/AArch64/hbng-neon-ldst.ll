@@ -78,7 +78,7 @@
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "Q0 <- [<X0> + 16*Imm(0)]_128\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- M[<X0> .. +16] per 1\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_ld1q2_annot:
@@ -233,12 +233,12 @@
 ; CHECK:       .ascii "Q0 <- [<X19> + Imm(0) step 8 x4]_32\n"
 ; CHECK-NEXT:  .ascii "Q1 <- [<X19> + Imm(0) + 4 step 8 x4]_32\n"
 ; CHECK-NEXT:  .ascii "@16\n"
-; CHECK-NEXT:  .ascii "LR <- Imm(0)\n"
+; CHECK-NEXT:  .ascii "LR <- 0\n"
 ; CHECK-LABEL: HBNG_ld2_post_reg_annot:
 ; CHECK:       .ascii "Q0 <- [<X19> + Imm(0) step 8 x4]_32\n"
 ; CHECK-NEXT:  .ascii "Q1 <- [<X19> + Imm(0) + 4 step 8 x4]_32\n"
 ; CHECK-NEXT:  .ascii "@16\n"
-; CHECK-NEXT:  .ascii "LR <- Imm(0)\n"
+; CHECK-NEXT:  .ascii "LR <- 0\n"
 
 %struct.uint8x16x2_t = type { [2 x <16 x i8>] }
 %struct.uint16x4x4_t = type { [4 x <4 x i16>] }

@@ -21,7 +21,7 @@
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "D0 <- Q0 red\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "X0 <- D0 mov\n"
+; CHECK-NEXT:  .ascii "X0 <- V0[0:7]\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; addv s0, v0.4s ; fmov w0, s0
@@ -29,7 +29,7 @@
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "S0 <- Q0 red\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "W0 <- S0 mov\n"
+; CHECK-NEXT:  .ascii "X0 <- V0[0:3]\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; umaxv b0, v0.8b ; fmov w0, s0
@@ -37,7 +37,7 @@
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "B0 <- D0 red\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "W0 <- S0 mov\n"
+; CHECK-NEXT:  .ascii "X0 <- V0[0:3]\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; uaddlv h0, v0.16b ; fmov w0, s0
@@ -45,7 +45,7 @@
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "H0 <- Q0 red\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "W0 <- S0 mov\n"
+; CHECK-NEXT:  .ascii "X0 <- V0[0:3]\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 

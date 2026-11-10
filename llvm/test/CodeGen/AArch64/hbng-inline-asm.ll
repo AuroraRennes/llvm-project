@@ -1,7 +1,8 @@
-; Inline asm: nothing for an empty statement (compiler barrier), SVC for a
-; system call, the system register accesses and barriers as their opcodes
-; (mrs alone gives a clean output, msr and barriers nothing), and an
-; Unsupported line naming every other instruction instead of dropping it.
+; Inline asm, one group per instruction: no group for an empty statement
+; (compiler barrier), svc for a system call, the system register accesses and
+; barriers as their opcodes (mrs alone gives a clean output, msr and barriers
+; nothing), and an unsupported line naming every other instruction instead of
+; dropping it.
 ; Comments, labels and directives are not instructions.
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
@@ -14,7 +15,7 @@ define void @barrier() {
 }
 
 ; CHECK-LABEL: HBNG_syscall_annot:
-; CHECK:       .ascii "SVC\n"
+; CHECK:       .ascii "svc\n"
 ; CHECK-NEXT:  .ascii "END\n"
 define i64 @syscall(i64 %n) {
   %r = call i64 asm sideeffect "svc 0", "={x0},{x8},~{memory}"(i64 %n)
@@ -24,10 +25,10 @@ define i64 @syscall(i64 %n) {
 ; A label, a tab after the mnemonic, a comment and two lines.
 ; CHECK-LABEL: HBNG_ll_sc_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Unsupported: INLINEASM ldaxr\n"
+; CHECK-NEXT:  .ascii "unsupported \"INLINEASM ldaxr\"\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "Unsupported: INLINEASM stlxr\n"
-; CHECK-NOT:   SVC
+; CHECK-NEXT:  .ascii "unsupported \"INLINEASM stlxr\"\n"
+; CHECK-NOT:   svc
 define i32 @ll_sc(ptr %p, i32 %v) {
   %r = call i32 asm sideeffect "1:\09ldaxr\09$0, [$1] // load-linked, not an svc\0A\09stlxr\09w9, $2, [$1]", "=&r,r,r,~{x9},~{memory}"(ptr %p, i32 %v)
   ret i32 %r
@@ -35,7 +36,7 @@ define i32 @ll_sc(ptr %p, i32 %v) {
 
 ; CHECK-LABEL: HBNG_tp_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "X0 <- Imm(0)\n"
+; CHECK-NEXT:  .ascii "X0 <- 0\n"
 define ptr @tp() {
   %r = call ptr asm "mrs $0, tpidr_el0", "=r"()
   ret ptr %r
@@ -44,9 +45,9 @@ define ptr @tp() {
 ; compiler-rt's __fe_raise_inexact: read FPSR, set a flag, write it back.
 ; CHECK-LABEL: HBNG_fpsr_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "X8 <- Imm(0)\n"
+; CHECK-NEXT:  .ascii "X8 <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "X8 <- X8 log Imm(7936)\n"
+; CHECK-NEXT:  .ascii "X8 <- X8\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "END\n"
@@ -60,9 +61,9 @@ define void @fpsr() {
 ; Two outputs: which one an mrs writes is not known here.
 ; CHECK-LABEL: HBNG_mrs2_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Unsupported: INLINEASM mrs\n"
+; CHECK-NEXT:  .ascii "unsupported \"INLINEASM mrs\"\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "Unsupported: INLINEASM mrs\n"
+; CHECK-NEXT:  .ascii "unsupported \"INLINEASM mrs\"\n"
 define i64 @mrs2() {
   %r = call { i64, i64 } asm sideeffect "mrs $0, fpcr\0Amrs $1, fpsr", "=r,=r"()
   %a = extractvalue { i64, i64 } %r, 0
@@ -85,7 +86,7 @@ define void @directive() {
 ; CHECK-LABEL: HBNG_two_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "Unsupported: INLINEASM fsqrt\n"
+; CHECK-NEXT:  .ascii "unsupported \"INLINEASM fsqrt\"\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "END\n"

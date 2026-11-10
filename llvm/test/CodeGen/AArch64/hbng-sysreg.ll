@@ -5,7 +5,7 @@
 
 ; CHECK-LABEL: HBNG_tp_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "X0 <- Imm(0)\n"
+; CHECK-NEXT:  .ascii "X0 <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_fence_annot:

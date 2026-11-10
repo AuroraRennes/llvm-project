@@ -16,9 +16,9 @@
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "send X1\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "W8 <- [<X1> + 4*Imm(0)]_32\n"
+; CHECK-NEXT:  .ascii "X8 <- M[<X1> .. +4]\n"
 ; CHECK-NEXT:  .ascii "@8\n"
-; CHECK-NEXT:  .ascii "W0 <- W8 add W0\n"
+; CHECK-NEXT:  .ascii "X0 <- X8 | X0\n"
 ; CHECK-NEXT:  .ascii "END\n"
 define i32 @fall(i32 %x, ptr %p) {
 entry:
@@ -42,7 +42,7 @@ zero:
 ; ASM-NEXT:    br x10
 ; CHECK-LABEL: HBNG_table_n_1_annot:
 ; CHECK:       .ascii "@12\n"
-; CHECK-NEXT:  .ascii "X9 <- X9 add UOp\n"
+; CHECK-NEXT:  .ascii "X9 <- X9\n"
 ; CHECK-NEXT:  .ascii "@16\n"
 ; CHECK-NEXT:  .ascii "@20\n"
 ; CHECK-NEXT:  .ascii "@24\n"

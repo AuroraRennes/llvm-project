@@ -28,7 +28,7 @@
 ; tbx v0.16b, { v1.16b }, v2.16b
 ; CHECK-LABEL: HBNG_tbx_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Unsupported: TBXv16i8One\n"
+; CHECK-NEXT:  .ascii "unsupported \"TBXv16i8One\"\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; bsl v0.16b, v1.16b, v2.16b
