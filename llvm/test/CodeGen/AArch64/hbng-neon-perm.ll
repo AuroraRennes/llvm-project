@@ -1,85 +1,90 @@
 ; NEON permutes and lane duplication move exact bytes, given as a byte map:
-; "perm (b0 b1 ...)" sets byte k of the destination from byte bk of the
-; sources taken one after the other (a 64-bit source is 8 bytes). The maps
-; below follow the definitions of zip, uzp, trn, ext, rev and dup (element).
+; "[V0[3:15] V1[0:2]]" sets byte k of the destination from the k-th byte
+; listed (V1[3:0] lists bytes 3, 2, 1, 0). The maps below follow the
+; definitions of zip, uzp, trn, ext, rev and dup (element).
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; zip1 v0.16b, v0.16b, v1.16b
 ; CHECK-LABEL: HBNG_zip1_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- Q0 perm Q1 (0 16 1 17 2 18 3 19 4 20 5 21 6 22 7 23)\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [V0[0] V1[0] V0[1] V1[1] V0[2] V1[2] V0[3] V1[3] V0[4] V1[4] V0[5] V1[5] V0[6] V1[6] V0[7] V1[7]]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; zip2 v0.4h, v0.4h, v1.4h
 ; CHECK-LABEL: HBNG_zip2h_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "D0 <- D0 perm D1 (4 5 12 13 6 7 14 15)\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- [V0[4:5] V1[4:5] V0[6:7] V1[6:7]]\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; uzp1 v0.8h, v0.8h, v1.8h
 ; CHECK-LABEL: HBNG_uzp1_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- Q0 perm Q1 (0 1 4 5 8 9 12 13 16 17 20 21 24 25 28 29)\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [V0[0:1] V0[4:5] V0[8:9] V0[12:13] V1[0:1] V1[4:5] V1[8:9] V1[12:13]]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; uzp1 v0.16b, v0.16b, v1.16b
 ; CHECK-LABEL: HBNG_uzp1b_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- Q0 perm Q1 (0 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30)\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [V0[0] V0[2] V0[4] V0[6] V0[8] V0[10] V0[12] V0[14] V1[0] V1[2] V1[4] V1[6] V1[8] V1[10] V1[12] V1[14]]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; zip2 v0.2s, v0.2s, v1.2s
 ; CHECK-LABEL: HBNG_uzp2s_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "D0 <- D0 perm D1 (4 5 6 7 12 13 14 15)\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- [V0[4:7] V1[4:7]]\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; trn2 v0.4s, v0.4s, v1.4s
 ; CHECK-LABEL: HBNG_trn2_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- Q0 perm Q1 (4 5 6 7 20 21 22 23 12 13 14 15 28 29 30 31)\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [V0[4:7] V1[4:7] V0[12:15] V1[12:15]]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; ext v0.16b, v0.16b, v1.16b, #3
 ; CHECK-LABEL: HBNG_ext_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- Q0 perm Q1 (3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18)\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [V0[3:15] V1[0:2]]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; ext v0.8b, v0.8b, v1.8b, #6
 ; CHECK-LABEL: HBNG_ext8_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "D0 <- D0 perm D1 (6 7 8 9 10 11 12 13)\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- [V0[6:7] V1[0:5]]\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; rev16 v0.16b, v0.16b
 ; CHECK-LABEL: HBNG_rev16_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- Q0 perm (1 0 3 2 5 4 7 6 9 8 11 10 13 12 15 14)\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [V0[1:0] V0[3:2] V0[5:4] V0[7:6] V0[9:8] V0[11:10] V0[13:12] V0[15:14]]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; rev32 v0.4h, v0.4h
 ; CHECK-LABEL: HBNG_rev32h_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "D0 <- D0 perm (2 3 0 1 6 7 4 5)\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- [V0[2:3] V0[0:1] V0[6:7] V0[4:5]]\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; rev64 v0.8h, v0.8h
 ; CHECK-LABEL: HBNG_rev64h_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- Q0 perm (6 7 4 5 2 3 0 1 14 15 12 13 10 11 8 9)\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [V0[6:7] V0[4:5] V0[2:3] V0[0:1] V0[14:15] V0[12:13] V0[10:11] V0[8:9]]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; dup v0.4s, v0.s[1]
 ; CHECK-LABEL: HBNG_duplane_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- Q0 perm (4 5 6 7 4 5 6 7 4 5 6 7 4 5 6 7)\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [V0[4:7] V0[4:7] V0[4:7] V0[4:7]]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; dup v0.2s, v0.s[3]
 ; CHECK-LABEL: HBNG_duplane2_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "D0 <- Q0 perm (12 13 14 15 12 13 14 15)\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- [V0[12:15] V0[12:15]]\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 

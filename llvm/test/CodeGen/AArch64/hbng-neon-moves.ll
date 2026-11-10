@@ -2,37 +2,38 @@
 ; V<n>[lo:hi] and keeps the other bytes; a lane read names its bytes. An X/W
 ; register has one tag: reading a V register into it takes the union of the
 ; bytes read, and writing it to a V register gives its tag to every byte
-; written (dup). Scalar and 64-bit destinations (S, D) clear the bytes above.
+; written (dup). Scalar and 64-bit destinations clear the bytes above, on
+; their own line. An immediate move is a clear.
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; mov v0.s[2], w0
 ; CHECK-LABEL: HBNG_insgpr_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[8:11] <- W0 mov\n"
+; CHECK-NEXT:  .ascii "V0[8:11] <- X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; mov v0.b[5], w0
 ; CHECK-LABEL: HBNG_insgpr8_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[5:5] <- W0 mov\n"
+; CHECK-NEXT:  .ascii "V0[5] <- X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; mov v0.s[0], v1.s[3]
 ; CHECK-LABEL: HBNG_inslane_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:3] <- V1[12:15] mov\n"
+; CHECK-NEXT:  .ascii "V0[0:3] <- V1[12:15] per 1\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; mov w0, v0.s[1]
 ; CHECK-LABEL: HBNG_umov_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "W0 <- V0[4:7] mov\n"
+; CHECK-NEXT:  .ascii "X0 <- V0[4:7]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; umov w0, v0.b[0]
 ; CHECK-LABEL: HBNG_umov0_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "W0 <- B0 mov\n"
+; CHECK-NEXT:  .ascii "X0 <- V0[0]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fmov x0, d0
@@ -44,7 +45,7 @@
 ; smov x0, v0.h[5]
 ; CHECK-LABEL: HBNG_smov_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "X0 <- V0[10:11] mov\n"
+; CHECK-NEXT:  .ascii "X0 <- V0[10:11]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; mov s0, v0.s[2]
@@ -57,13 +58,14 @@
 ; dup v0.16b, w0
 ; CHECK-LABEL: HBNG_dupgpr_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- W0 mov\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; dup v0.2s, w0
 ; CHECK-LABEL: HBNG_dupgpr2s_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "D0 <- W0 mov\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- X0\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fmov s0, w0
@@ -82,37 +84,37 @@
 ; mov v0.d[1], x0
 ; CHECK-LABEL: HBNG_fmovhigh_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[8:15] <- X0 mov\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; mov x0, v0.d[1]
 ; CHECK-LABEL: HBNG_fmovfromhigh_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "X0 <- V0[8:15] mov\n"
+; CHECK-NEXT:  .ascii "X0 <- V0[8:15]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; movi v0.8b, #90
 ; CHECK-LABEL: HBNG_movi8b_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "D0 <- Imm(90)\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; movi v0.4s, #18, lsl #8
 ; CHECK-LABEL: HBNG_movi4s_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- Imm(18)\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; movi v0.2d, #0000000000000000
 ; CHECK-LABEL: HBNG_movi2d_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- Imm(0)\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fmov v0.4s, #1.00000000
 ; CHECK-LABEL: HBNG_fmovv_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- Imm(112)\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 

@@ -1,25 +1,30 @@
 ; Pairwise NEON operations: output element i from input elements 2i and 2i+1
-; of the sources taken one after the other ("pair.<element bytes>").
+; of the sources taken one after the other ("per <2e>:<e>", the lower half of
+; the destination from the first source, the upper half from the second).
 ; Reductions, and the scalar pairwise forms: the union of every byte read into
-; every byte written ("red"); a 64-bit source is its 8 low bytes (D).
+; every byte written, then the bytes above the scalar cleared.
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; addp v0.4s, v0.4s, v1.4s
 ; CHECK-LABEL: HBNG_addp_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- Q0 pair.4 Q1\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:15] per 8:4\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- V1[0:15] per 8:4\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; umaxp v0.8b, v0.8b, v1.8b
 ; CHECK-LABEL: HBNG_umaxp_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "D0 <- D0 pair.1 D1\n"
+; CHECK-NEXT:  .ascii "V0[0:3] <- V0[0:7] per 2:1\n"
+; CHECK-NEXT:  .ascii "V0[4:7] <- V1[0:7] per 2:1\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; addp d0, v0.2d ; fmov x0, d0
 ; CHECK-LABEL: HBNG_addpd_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "D0 <- Q0 red\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:15]\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "X0 <- V0[0:7]\n"
 ; CHECK-NEXT:  .ascii "@8\n"
@@ -27,7 +32,8 @@
 ; addv s0, v0.4s ; fmov w0, s0
 ; CHECK-LABEL: HBNG_addv_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "S0 <- Q0 red\n"
+; CHECK-NEXT:  .ascii "V0[0:3] <- V0[0:15]\n"
+; CHECK-NEXT:  .ascii "V0[4:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "X0 <- V0[0:3]\n"
 ; CHECK-NEXT:  .ascii "@8\n"
@@ -35,7 +41,8 @@
 ; umaxv b0, v0.8b ; fmov w0, s0
 ; CHECK-LABEL: HBNG_umaxv8_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "B0 <- D0 red\n"
+; CHECK-NEXT:  .ascii "V0[0] <- V0[0:7]\n"
+; CHECK-NEXT:  .ascii "V0[1:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "X0 <- V0[0:3]\n"
 ; CHECK-NEXT:  .ascii "@8\n"
@@ -43,7 +50,8 @@
 ; uaddlv h0, v0.16b ; fmov w0, s0
 ; CHECK-LABEL: HBNG_uaddlv_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "H0 <- Q0 red\n"
+; CHECK-NEXT:  .ascii "V0[0:1] <- V0[0:15]\n"
+; CHECK-NEXT:  .ascii "V0[2:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "X0 <- V0[0:3]\n"
 ; CHECK-NEXT:  .ascii "@8\n"

@@ -1,28 +1,28 @@
-; Table lookups: every byte written gets the union of all table bytes, not
-; the index ("tbl <table> idx <index>", no pointer tainting, as a scalar lookup
-; in a table). tbx, which keeps the old byte for an index out of range, is not
+; Table lookups: every byte written gets the union of all table bytes, the
+; index listed under "excl" (no pointer tainting, as a scalar lookup in a
+; table). tbx, which keeps the old byte for an index out of range, is not
 ; described and stays unsupported (the executor stops on it). Bitwise selects:
-; byte k from byte k of the two data operands, not of the mask ("sel <a> <b>
-; mask <m>": bsl selects with its destination, bit/bif with their third
-; operand).
+; byte k from byte k of the two data operands ("per 1"), the mask under
+; "excl" (bsl selects with its destination, bit/bif with their third operand).
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; tbl v0.16b, { v0.16b }, v1.16b
 ; CHECK-LABEL: HBNG_tbl1_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- tbl Q0 idx Q1\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:15] excl V1[0:15] per 1\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; tbl v0.8b, { v0.16b, v1.16b }, v2.8b
 ; CHECK-LABEL: HBNG_tbl2_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "D0 <- tbl Q0 Q1 idx D2\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:15] | V1[0:15] excl V2[0:7] per 1\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; tbl v0.16b, { v0.16b, v1.16b, v2.16b, v3.16b }, v4.16b
 ; CHECK-LABEL: HBNG_tbl4_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- tbl Q0 Q1 Q2 Q3 idx Q4\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:15] | V1[0:15] | V2[0:15] | V3[0:15] excl V4[0:15] per 1\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; tbx v0.16b, { v1.16b }, v2.16b
@@ -34,7 +34,7 @@
 ; bsl v0.16b, v1.16b, v2.16b
 ; CHECK-LABEL: HBNG_bsl_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "Q0 <- sel Q1 Q2 mask Q0\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- V1[0:15] | V2[0:15] per 1 excl V0[0:15] per 1\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 

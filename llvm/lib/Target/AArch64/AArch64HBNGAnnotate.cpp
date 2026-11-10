@@ -87,7 +87,8 @@ private:
     static bool isUnsupported(ArrayRef<std::string> Lines);
     std::optional<std::vector<std::string>> genNeonAnnotation(MachineInstr &MI);
     std::string vecBytes(Register R, unsigned Lo, unsigned Len, bool Whole);
-    std::string vecSource(Register R, unsigned Lo, unsigned Len);
+    std::string vecWhole(Register R);
+    std::string byteMap(ArrayRef<Register> Srcs, ArrayRef<unsigned> Map);
     unsigned regBytes(Register R);
     std::string genTrackedValueLine(Register Dst, Register Src, int64_t Imm);
     std::string genSPWriteLine(MachineInstr &MI, const HBNGSPWrite &W);
@@ -279,35 +280,33 @@ std::vector<std::string> AArch64HBNGAnnotate::genClear(MachineInstr &MI) {
 //===----------------------------------------------------------------------===//
 // SIMD/FP registers
 //
-// A V register has one tag per byte. A line names the bytes it writes and
-// reads, and an operator saying how their tags combine:
-//  - Q<n>/D<n>/S<n>/H<n>/B<n>: the 16/8/4/2/1 bytes of V<n> from byte 0. As a
-//    destination, the bytes above are cleared (as a W write clears the top of
-//    X): the scalar and 64-bit vector forms;
-//  - V<n>[lo:hi]: bytes lo to hi of V<n>, inclusive. As a destination, the
-//    other bytes are kept (lane inserts, the "2" forms of narrowing);
-//  - W/X registers have one tag: V -> X takes the union of the bytes read,
-//    X -> V gives the X tag to every byte written.
-// Operators (OR is the combination in every case, except cmp):
-//  - mov, log: exact bytes, byte k of the destination from byte k of each
-//    source (moves, bitwise operations);
-//  - add.e, sub.e, ari.e, shi.e, bit.e, cvt.e: union within each element of
-//    e bytes (lanes stay apart). A source of one element (a by-element
-//    operand, V<n>[lo:hi] of e bytes) is used for every element;
-//  - <op>.wid.a.b, <op>.nar.a.b: union per element, a bytes in, b bytes out
-//    (widening, narrowing);
-//  - pair.e: output element i from input elements 2i and 2i+1 of the
-//    sources taken one after the other (pairwise);
-//  - red: the union of every byte read into every byte written (reductions);
-//  - cmp.e: clean (no tag on comparisons, as for the condition flags);
-//  - perm (b0 b1 ...): byte k of the destination from byte bk of the sources
-//    taken one after the other (permutes, duplication of a lane);
-//  - tbl <table> idx <index>: the union of all table bytes into every byte
-//    written; the index is written but not combined (no pointer tainting);
-//  - sel <a> <b> mask <m>: byte k from byte k of a and b, not of the mask (a
-//    bitwise select is a condition on the data, like csel).
-// Unary lines give the operator after the source. Immediates are written as
-// sources (Imm(n)), with no tag.
+// A V register has one tag per byte: V0[0:15] is all of v0, V0[4:7] its
+// second 4-byte lane. The NEON forms and their lines:
+//
+//   add  v0.4s, v1.4s, v2.4s      V0[0:15] <- V1[0:15] | V2[0:15] per 4
+//     lane i from lane i of each source ("per 4": lanes of 4 bytes)
+//   and  v0.16b, v1.16b, v2.16b   V0[0:15] <- V1[0:15] | V2[0:15] per 1
+//     byte k from byte k
+//   ushll v0.4s, v1.4h, #0        V0[0:15] <- V1[0:7] per 2:4
+//     lanes of 2 bytes in, of 4 bytes out
+//   addp v0.4s, v1.4s, v2.4s      V0[0:7] <- V1[0:15] per 8:4
+//                                 V0[8:15] <- V2[0:15] per 8:4
+//     each lane out from two neighbouring lanes in
+//   addv s0, v1.4s                V0[0:3] <- V1[0:15]
+//     every byte read into every byte written
+//   ext  v0.16b, v1.16b, v2.16b, #3   V0[0:15] <- [V1[3:15] V2[0:2]]
+//     byte k from the k-th byte listed
+//   cmeq v0.4s, v1.4s, v2.4s      V0[0:15] <- 0 excl V1[0:15] | V2[0:15] per 4
+//     clean; "excl" lists what is read but does not reach the result
+//   tbl  v0.16b, {v1.16b}, v2.16b V0[0:15] <- V1[0:15] excl V2[0:15] per 1
+//     the table, not the index
+//   bsl  v0.16b, v1.16b, v2.16b
+//       V0[0:15] <- V1[0:15] | V2[0:15] per 1 excl V0[0:15] per 1
+//     the data, not the mask (v0)
+//   mov  w0, v1.s[1]              X0 <- V1[4:7]
+//   movi v0.4s, #1                V0[0:15] <- 0
+//
+// A 64-bit form (v0.2s) writes V0[0:7] and clears V0[8:15] on a second line.
 
 // Bytes [Lo, Lo + Len) of the V register R, in a source or destination.
 std::string AArch64HBNGAnnotate::vecBytes(Register R, unsigned Lo, unsigned Len,
@@ -323,10 +322,9 @@ std::string AArch64HBNGAnnotate::vecBytes(Register R, unsigned Lo, unsigned Len,
          std::to_string(Lo + Len - 1) + "]";
 }
 
-// A source: by its size from byte 0 when it starts there.
-std::string AArch64HBNGAnnotate::vecSource(Register R, unsigned Lo,
-                                           unsigned Len) {
-  return vecBytes(R, Lo, Len, Lo == 0 && isPowerOf2_32(Len) && Len <= 16);
+// Every byte of the V register R.
+std::string AArch64HBNGAnnotate::vecWhole(Register R) {
+  return vecRange(R, 0, regBytes(R));
 }
 
 // The size of a register in bytes.
@@ -334,6 +332,51 @@ unsigned AArch64HBNGAnnotate::regBytes(Register R) {
   return TRI->getRegSizeInBits(*TRI->getMinimalPhysRegClass(R))
              .getFixedValue() /
          8;
+}
+
+// " per In:Out", or " per In" when they are equal.
+static std::string per(unsigned In, unsigned Out) {
+  std::string S = " per " + std::to_string(In);
+  if (In != Out)
+    S += ":" + std::to_string(Out);
+  return S;
+}
+
+// The byte map of Map, entries into the bytes of Srcs taken one after the
+// other: runs of consecutive bytes of one source operand, ascending (V1[4:7])
+// or descending (V1[7:4]).
+std::string AArch64HBNGAnnotate::byteMap(ArrayRef<Register> Srcs,
+                                         ArrayRef<unsigned> Map) {
+  struct Byte {
+    unsigned Src, V, B; // source operand, V register number, byte
+  };
+  SmallVector<Byte, 32> Bytes;
+  for (unsigned S = 0; S < Srcs.size(); ++S)
+    for (unsigned B = 0, E = regBytes(Srcs[S]); B < E; ++B)
+      Bytes.push_back({S, TRI->getEncodingValue(Srcs[S]), B});
+  SmallVector<std::string, 16> Runs;
+  for (unsigned K = 0; K < Map.size();) {
+    Byte First = Bytes[Map[K]];
+    unsigned Hi = First.B;
+    int Dir = 0;
+    for (++K; K < Map.size(); ++K) {
+      Byte Next = Bytes[Map[K]];
+      int D = Next.Src != First.Src ? 0
+              : Next.B == Hi + 1    ? 1
+              : Next.B + 1 == Hi    ? -1
+                                    : 0;
+      if (D == 0 || (Dir && D != Dir))
+        break;
+      Dir = D;
+      Hi = Next.B;
+    }
+    std::string S =
+        "V" + std::to_string(First.V) + "[" + std::to_string(First.B);
+    if (Hi != First.B)
+      S += ":" + std::to_string(Hi);
+    Runs.push_back(S + "]");
+  }
+  return "[" + join(Runs, " ") + "]";
 }
 
 namespace {
@@ -400,74 +443,74 @@ static std::optional<NeonName> parseNeonName(StringRef Name) {
   return R;
 }
 
-static NeonFamily getNeonFamily(StringRef Mn, StringRef &Op) {
+static NeonFamily getNeonFamily(StringRef Mn) {
   auto Is = [&](std::initializer_list<StringRef> L) {
     return llvm::is_contained(L, Mn);
   };
   if (Is({"ADD", "FADD", "SQADD", "UQADD", "SHADD", "UHADD", "SRHADD",
           "URHADD"}))
-    return Op = "add", NF_Lane;
+    return NF_Lane;
   if (Is({"SUB", "FSUB", "SQSUB", "UQSUB", "SHSUB", "UHSUB"}))
-    return Op = "sub", NF_Lane;
+    return NF_Lane;
   if (Is({"MUL", "MLA", "MLS", "PMUL", "SQDMULH", "SQRDMULH", "FMUL", "FMULX",
           "FMLA", "FMLS", "FDIV", "SABD", "UABD", "FABD", "SABA", "UABA",
           "SMAX", "SMIN", "UMAX", "UMIN", "FMAX", "FMIN", "FMAXNM", "FMINNM",
           "NEG", "ABS", "SQABS", "SQNEG", "FNEG", "FABS", "FSQRT", "FRECPE",
           "FRSQRTE", "URECPE", "URSQRTE", "FRECPS", "FRSQRTS", "FRINTA",
           "FRINTI", "FRINTM", "FRINTN", "FRINTP", "FRINTX", "FRINTZ"}))
-    return Op = "ari", NF_Lane;
+    return NF_Lane;
   if (Is({"SHL", "USHR", "SSHR", "URSHR", "SRSHR", "USRA", "SSRA", "URSRA",
           "SRSRA", "SLI", "SRI", "USHL", "SSHL", "URSHL", "SRSHL", "UQSHL",
           "SQSHL", "SQSHLU", "UQRSHL", "SQRSHL"}))
-    return Op = "shi", NF_Lane;
+    return NF_Lane;
   if (Is({"CNT", "CLZ", "CLS", "RBIT"}))
-    return Op = "bit", NF_Lane;
+    return NF_Lane;
   if (Is({"FCVTZS", "FCVTZU", "FCVTAS", "FCVTAU", "FCVTMS", "FCVTMU", "FCVTNS",
           "FCVTNU", "FCVTPS", "FCVTPU", "SCVTF", "UCVTF"}))
-    return Op = "cvt", NF_Lane;
+    return NF_Lane;
   if (Is({"AND", "ORR", "EOR", "BIC", "ORN", "NOT"}))
-    return Op = "log", NF_Log;
+    return NF_Log;
   if (Is({"CMEQ", "CMGE", "CMGT", "CMHI", "CMHS", "CMLE", "CMLT", "CMTST",
           "FCMEQ", "FCMGE", "FCMGT", "FCMLE", "FCMLT", "FACGE", "FACGT"}))
-    return Op = "cmp", NF_Cmp;
+    return NF_Cmp;
   if (Is({"ADDP", "FADDP", "SMAXP", "SMINP", "UMAXP", "UMINP", "FMAXP",
           "FMINP", "FMAXNMP", "FMINNMP"}))
-    return Op = "pair", NF_Pair;
+    return NF_Pair;
   if (Is({"ADDV", "SMAXV", "SMINV", "UMAXV", "UMINV", "SADDLV", "UADDLV",
           "FMAXV", "FMINV", "FMAXNMV", "FMINNMV"}))
-    return Op = "red", NF_Red;
+    return NF_Red;
   if (Is({"USHLL", "SSHLL", "SHLL"}))
-    return Op = "shi", NF_Wide;
+    return NF_Wide;
   if (Is({"UMULL", "SMULL", "UABDL", "SABDL", "SQDMULL"}))
-    return Op = "ari", NF_Wide;
+    return NF_Wide;
   if (Is({"UADDL", "SADDL"}))
-    return Op = "add", NF_Wide;
+    return NF_Wide;
   if (Is({"USUBL", "SSUBL"}))
-    return Op = "sub", NF_Wide;
+    return NF_Wide;
   if (Is({"FCVTL"}))
-    return Op = "cvt", NF_Wide;
+    return NF_Wide;
   if (Is({"XTN"}))
-    return Op = "mov", NF_Narrow;
+    return NF_Narrow;
   if (Is({"SQXTN", "UQXTN", "SQXTUN"}))
-    return Op = "ari", NF_Narrow;
+    return NF_Narrow;
   if (Is({"SHRN", "RSHRN", "SQSHRN", "UQSHRN", "SQRSHRN", "UQRSHRN", "SQSHRUN",
           "SQRSHRUN"}))
-    return Op = "shi", NF_Narrow;
+    return NF_Narrow;
   if (Is({"FCVTN", "FCVTXN"}))
-    return Op = "cvt", NF_Narrow;
+    return NF_Narrow;
   if (Is({"ZIP1", "ZIP2", "UZP1", "UZP2", "TRN1", "TRN2", "EXT", "REV16",
           "REV32", "REV64", "DUP"}))
-    return Op = "perm", NF_Perm;
+    return NF_Perm;
   if (Is({"TBL"}))
-    return Op = "tbl", NF_Tbl;
+    return NF_Tbl;
   if (Is({"BSL", "BIT", "BIF"}))
-    return Op = "sel", NF_Sel;
+    return NF_Sel;
   if (Is({"INS"}))
-    return Op = "mov", NF_Ins;
+    return NF_Ins;
   if (Is({"UMOV", "SMOV"}))
-    return Op = "mov", NF_Umov;
+    return NF_Umov;
   if (Is({"MOVI", "MVNI", "FMOV"}))
-    return Op = "mov", NF_Imm;
+    return NF_Imm;
   return NF_None;
 }
 
@@ -518,7 +561,7 @@ getPermMap(const NeonName &NN, const MachineInstr &MI, unsigned DstBytes) {
 }
 
 // The annotation of a NEON instruction (Advanced SIMD vector and scalar
-// forms), std::nullopt if it is not one, or an Unsupported line for a NEON
+// forms), std::nullopt if it is not one, or an unsupported line for a NEON
 // mnemonic whose form is not described.
 std::optional<std::vector<std::string>>
 AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
@@ -526,12 +569,11 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
   std::optional<NeonName> NN = parseNeonName(Name);
   if (!NN)
     return std::nullopt;
-  StringRef Op;
-  NeonFamily F = getNeonFamily(NN->Mn, Op);
+  NeonFamily F = getNeonFamily(NN->Mn);
   if (F == NF_None)
     return std::nullopt;
-  std::vector<std::string> Unsupported = {
-      "Unsupported: " + Name.str() + "\n"};
+  std::vector<std::string> Unsupported = {"unsupported \"" + Name.str() +
+                                          "\"\n"};
 
   unsigned NumOps = MI.getNumExplicitOperands();
   MachineOperand &Dst = MI.getOperand(0);
@@ -543,172 +585,191 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
               MI.getOperand(1).isTied() && MI.getOperand(1).isUse();
   bool Indexed = NN->Rest.contains("indexed");
   unsigned E = NN->E;
-  auto Line = [](const std::string &D, const std::string &Src) {
-    std::string L = D + " <- " + Src;
-    LLVM_DEBUG(dbgs() << L << "\n");
-    return std::vector<std::string>{L + "\n"};
+  unsigned DB = isFPR(Rd) ? regBytes(Rd) : 0;
+  // The registers read from operand First on, the by-element register of an
+  // indexed form left out.
+  auto Srcs = [&](unsigned First) {
+    SmallVector<Register, 4> R;
+    for (unsigned I = First, Last = Indexed ? NumOps - 2 : NumOps; I < Last;
+         ++I)
+      if (MI.getOperand(I).isReg() && MI.getOperand(I).isUse())
+        R.push_back(MI.getOperand(I).getReg());
+    return R;
   };
-  auto Name_ = [&](Register R) { return TRI->getRegAsmName(R).str(); };
-  // A whole register operand, as written by the instruction.
-  auto Whole = [&](Register R) {
-    if (AArch64::FPR128RegClass.contains(R) ||
-        AArch64::FPR64RegClass.contains(R) ||
-        AArch64::FPR32RegClass.contains(R) ||
-        AArch64::FPR16RegClass.contains(R) || AArch64::FPR8RegClass.contains(R))
-      return vecBytes(R, 0, regBytes(R), /*Whole=*/true);
-    return Name_(R);
+  // Whether every register of Rs is a V register of Bytes bytes.
+  auto AllOf = [&](ArrayRef<Register> Rs, unsigned Bytes) {
+    return all_of(Rs, [&](Register R) {
+      return isFPR(R) && regBytes(R) == Bytes;
+    });
   };
-  // Infix line over the explicit operands from First (registers, and the
-  // first immediate); a by-element operand (Rm, idx) is its lane.
-  auto Infix = [&](unsigned First, StringRef O) {
-    SmallVector<std::string, 4> Srcs;
-    bool SeenImm = false;
-    unsigned Last = Indexed ? NumOps - 2 : NumOps;
-    for (unsigned I = First; I < Last; ++I) {
-      MachineOperand &MO = MI.getOperand(I);
-      if (MO.isReg())
-        Srcs.push_back(Whole(MO.getReg()));
-      else if (MO.isImm() && !SeenImm) {
-        Srcs.push_back("Imm(" + std::to_string(MO.getImm()) + ")");
-        SeenImm = true;
-      }
-    }
-    if (Indexed)
-      Srcs.push_back(vecBytes(MI.getOperand(NumOps - 2).getReg(),
-                              MI.getOperand(NumOps - 1).getImm() * E, E,
-                              /*Whole=*/false));
-    if (Srcs.size() == 1)
-      return Srcs[0] + " " + O.str();
-    return llvm::join(Srcs, " " + O.str() + " ");
+  auto Union = [&](ArrayRef<Register> Rs) {
+    SmallVector<std::string, 4> L;
+    for (Register R : Rs)
+      L.push_back(vecWhole(R));
+    return unionOf(L);
   };
-  std::string OpE = (Op + "." + Twine(E)).str();
 
   switch (F) {
   case NF_None:
     break;
-  case NF_Lane:
-    // Lane-wise, the old destination included when it is read (mla, usra).
-    return Line(Whole(Rd), Infix(1, OpE));
-  case NF_Cmp:
-    return Line(Whole(Rd), Infix(1, OpE));
-  case NF_Log:
-    return Line(Whole(Rd), Infix(1, Op));
-  case NF_Pair:
+  case NF_Lane: {
+    // The old destination included when it is read (mla, usra).
+    SmallVector<Register, 4> Rs = Srcs(1);
+    if (!DB || DB % E || !AllOf(Rs, DB))
+      return Unsupported;
+    if (!Indexed)
+      return writeReg(Rd, Union(Rs) + per(E, E));
+    std::string Lane = vecRange(MI.getOperand(NumOps - 2).getReg(),
+                                MI.getOperand(NumOps - 1).getImm() * E, E);
+    std::vector<std::string> Lines;
+    for (unsigned Lo = 0; Lo < DB; Lo += E) {
+      SmallVector<std::string, 4> L;
+      for (Register R : Rs)
+        L.push_back(vecRange(R, Lo, E));
+      L.push_back(Lane);
+      Lines.push_back(vecRange(Rd, Lo, E) + " <- " + unionOf(L) + "\n");
+    }
+    if (DB < 16)
+      Lines.push_back(vecRange(Rd, DB, 16 - DB) + " <- 0\n");
+    return Lines;
+  }
+  case NF_Log: {
+    // The old destination included when it is read (orr and bic immediate).
+    SmallVector<Register, 4> Rs = Srcs(1);
+    if (!DB || !AllOf(Rs, DB))
+      return Unsupported;
+    return writeReg(Rd, Union(Rs) + per(1, 1));
+  }
+  case NF_Cmp: {
+    SmallVector<Register, 4> Rs = Srcs(1);
+    if (!DB || DB % E || !AllOf(Rs, DB))
+      return Unsupported;
+    return writeReg(Rd, "0 excl " + Union(Rs) + per(E, E));
+  }
+  case NF_Pair: {
+    SmallVector<Register, 4> Rs = Srcs(1);
     if (NN->Rest == "p") // scalar pairwise: a reduction of two elements
-      return Line(Whole(Rd), Infix(1, "red"));
-    return Line(Whole(Rd), Infix(1, OpE));
+      return writeReg(Rd, Union(Rs));
+    if (!DB || DB % (2 * E) || Rs.size() != 2 || !AllOf(Rs, DB))
+      return Unsupported;
+    std::vector<std::string> Lines = {
+        vecRange(Rd, 0, DB / 2) + " <- " + vecWhole(Rs[0]) + per(2 * E, E) +
+            "\n",
+        vecRange(Rd, DB / 2, DB / 2) + " <- " + vecWhole(Rs[1]) +
+            per(2 * E, E) + "\n"};
+    if (DB < 16)
+      Lines.push_back(vecRange(Rd, DB, 16 - DB) + " <- 0\n");
+    return Lines;
+  }
   case NF_Red:
-    return Line(Whole(Rd), Infix(1, Op));
+    return writeReg(Rd, Union(Srcs(1)));
   case NF_Wide: {
     // The source arrangement is in the name; the "2" forms read the upper
     // half of their (128-bit) sources.
-    if (Indexed || Tied || NN->N == 0)
+    unsigned SB = NN->N * E;
+    if (Indexed || Tied || (SB != 8 && SB != 16) || DB != 16)
       return Unsupported;
-    bool Upper = NN->N * E == 16;
-    SmallVector<std::string, 3> Srcs;
-    for (unsigned I = 1; I < NumOps; ++I) {
-      MachineOperand &MO = MI.getOperand(I);
-      if (MO.isReg())
-        Srcs.push_back(Upper ? vecBytes(MO.getReg(), 8, 8, false)
-                             : Whole(MO.getReg()));
-      else if (MO.isImm())
-        Srcs.push_back("Imm(" + std::to_string(MO.getImm()) + ")");
-    }
-    std::string O = (Op + ".wid." + Twine(E) + "." + Twine(2 * E)).str();
-    std::string S = Srcs.size() == 1 ? Srcs[0] + " " + O
-                                     : llvm::join(Srcs, " " + O + " ");
-    return Line(Whole(Rd), S);
+    SmallVector<Register, 4> Rs = Srcs(1);
+    if (!AllOf(Rs, SB))
+      return Unsupported;
+    SmallVector<std::string, 2> L;
+    for (Register R : Rs)
+      L.push_back(vecRange(R, SB - 8, 8));
+    return writeReg(Rd, unionOf(L) + per(E, 2 * E));
   }
   case NF_Narrow: {
     // The destination arrangement is in the name; the "2" forms write the
     // upper half of the destination and keep the lower one.
-    if (NN->N == 0)
+    unsigned Out = NN->N * E;
+    bool Upper = Out == 16;
+    if (!NN->N || Upper != Tied || !DB)
       return Unsupported;
-    bool Upper = NN->N * E == 16;
-    if (Upper != Tied)
+    SmallVector<Register, 4> Rs = Srcs(Tied ? 2 : 1);
+    if (!AllOf(Rs, Upper ? 16 : 2 * Out))
       return Unsupported;
-    std::string O = (Op + ".nar." + Twine(2 * E) + "." + Twine(E)).str();
-    std::string D = Upper ? vecBytes(Rd, 8, 8, false) : Whole(Rd);
-    return Line(D, Infix(Tied ? 2 : 1, O));
+    std::string Rhs = Union(Rs) + per(2 * E, E);
+    if (Upper)
+      return std::vector<std::string>{vecRange(Rd, 8, 8) + " <- " + Rhs + "\n"};
+    if (DB != Out)
+      return Unsupported;
+    return writeReg(Rd, Rhs);
   }
   case NF_Perm: {
     if (NN->Mn == "DUP" && NN->Rest == "gpr") // X -> V, every element
-      return Line(Whole(Rd), Name_(MI.getOperand(1).getReg()) + " mov");
-    if (NN->N == 0)
+      return writeReg(Rd, gprLoc(MI.getOperand(1).getReg()).value_or("0"));
+    if (!NN->N || !DB)
       return Unsupported;
-    unsigned DB = regBytes(Rd);
     unsigned NumSrc = NN->Mn == "DUP" || NN->Mn.starts_with("REV") ? 1 : 2;
-    SmallVector<std::string, 2> Srcs;
+    SmallVector<Register, 2> Rs;
     for (unsigned I = 1; I <= NumSrc; ++I)
-      Srcs.push_back(Whole(MI.getOperand(I).getReg()));
+      Rs.push_back(MI.getOperand(I).getReg());
+    // The map of a two-source permute counts in sources as wide as the
+    // destination.
+    if (NumSrc == 2 && !AllOf(Rs, DB))
+      return Unsupported;
     std::optional<SmallVector<unsigned, 16>> Map = getPermMap(*NN, MI, DB);
     if (!Map)
       return Unsupported;
-    std::string S = llvm::join(Srcs, " perm ");
-    if (NumSrc == 1)
-      S += " perm";
-    S += " (";
-    for (unsigned K = 0; K < Map->size(); ++K)
-      S += (K ? " " : "") + std::to_string((*Map)[K]);
-    S += ")";
-    return Line(Whole(Rd), S);
+    return writeReg(Rd, byteMap(Rs, *Map));
   }
   case NF_Tbl: {
     // (Vd, table list, Vm). TBX, which keeps the old byte for an index out
     // of range, is not described (not in the families).
     Register List = MI.getOperand(1).getReg();
-    SmallVector<std::string, 4> Table;
+    SmallVector<Register, 4> Table;
     if (AArch64::FPR128RegClass.contains(List)) {
-      Table.push_back(Whole(List));
+      Table.push_back(List);
     } else {
       static const unsigned QSub[] = {AArch64::qsub0, AArch64::qsub1,
                                       AArch64::qsub2, AArch64::qsub3};
       for (unsigned Sub : QSub)
         if (Register R = TRI->getSubReg(List, Sub))
-          Table.push_back(Whole(R));
+          Table.push_back(R);
     }
-    return Line(Whole(Rd), "tbl " + llvm::join(Table, " ") + " idx " +
-                               Whole(MI.getOperand(2).getReg()));
+    Register Idx = MI.getOperand(2).getReg();
+    if (!DB || !AllOf(Idx, DB))
+      return Unsupported;
+    return writeReg(Rd, Union(Table) + " excl " + vecWhole(Idx) + per(1, 1));
   }
   case NF_Sel: {
     // (Vd, Vd tied, Vn, Vm). BSL: Vd is the mask, Vn and Vm the data.
     // BIT/BIF: Vm is the mask, Vd's old bits and Vn the data.
-    if (!Tied)
+    if (!Tied || !DB)
       return Unsupported;
     Register Old = MI.getOperand(1).getReg(), Rn = MI.getOperand(2).getReg(),
              Rm = MI.getOperand(3).getReg();
-    if (NN->Mn == "BSL")
-      return Line(Whole(Rd), "sel " + Whole(Rn) + " " + Whole(Rm) + " mask " +
-                                 Whole(Old));
-    return Line(Whole(Rd), "sel " + Whole(Old) + " " + Whole(Rn) + " mask " +
-                               Whole(Rm));
+    bool BSL = NN->Mn == "BSL";
+    SmallVector<Register, 2> Data = {BSL ? Rn : Old, BSL ? Rm : Rn};
+    Register Mask = BSL ? Old : Rm;
+    return writeReg(Rd, Union(Data) + per(1, 1) + " excl " + vecWhole(Mask) +
+                            per(1, 1));
   }
   case NF_Ins: {
     // (Vd, Vd tied, idx, Rn [, idx2]): one lane from Rn, the others kept.
     if (!Tied || NN->N != 0)
       return Unsupported;
-    std::string D = vecBytes(Rd, MI.getOperand(2).getImm() * E, E, false);
+    std::string D = vecRange(Rd, MI.getOperand(2).getImm() * E, E);
     Register Rn = MI.getOperand(3).getReg();
     if (NN->Rest == "gpr")
-      return Line(D, Name_(Rn) + " mov");
+      return std::vector<std::string>{D + " <- " + gprLoc(Rn).value_or("0") +
+                                      "\n"};
     if (NN->Rest == "lane")
-      return Line(D, vecSource(Rn, MI.getOperand(4).getImm() * E, E) + " mov");
+      return std::vector<std::string>{
+          D + " <- " + vecRange(Rn, MI.getOperand(4).getImm() * E, E) +
+          per(1, 1) + "\n"};
     return Unsupported;
   }
-  case NF_Umov: {
+  case NF_Umov:
     // (Rd, Vn, idx): one lane to a W/X register.
     if (NN->N != 0)
       return Unsupported;
-    return Line(Name_(Rd), vecSource(MI.getOperand(1).getReg(),
-                                     MI.getOperand(2).getImm() * E, E) +
-                               " mov");
-  }
+    return writeReg(Rd, vecRange(MI.getOperand(1).getReg(),
+                                 MI.getOperand(2).getImm() * E, E));
   case NF_Imm:
     // (Vd, imm8 [, shift]); the ORR/BIC immediate forms are NF_Log.
     if (Tied || NumOps < 2 || !MI.getOperand(1).isImm())
       return Unsupported;
-    return Line(Whole(Rd), "Imm(" + std::to_string(MI.getOperand(1).getImm()) +
-                               ")");
+    return writeReg(Rd, "0");
   }
   return Unsupported;
 }
@@ -1080,8 +1141,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &M
 
 bool AArch64HBNGAnnotate::isUnsupported(ArrayRef<std::string> Lines) {
   return any_of(Lines, [](const std::string &L) {
-    return StringRef(L).starts_with("unsupported ") ||
-           StringRef(L).starts_with("Unsupported: ");
+    return StringRef(L).starts_with("unsupported ");
   });
 }
 
