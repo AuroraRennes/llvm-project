@@ -44,8 +44,11 @@ zero:
 ; CHECK:       .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "X9 <- X9\n"
 ; CHECK-NEXT:  .ascii "@16\n"
+; CHECK-NEXT:  .ascii "X10 <- 0\n"
 ; CHECK-NEXT:  .ascii "@20\n"
+; CHECK-NEXT:  .ascii "X11 <- 0\n"
 ; CHECK-NEXT:  .ascii "@24\n"
+; CHECK-NEXT:  .ascii "X10 <- X10 | X11\n"
 ; CHECK-NEXT:  .ascii "@28\n"
 ; CHECK-NEXT:  .ascii "END\n"
 

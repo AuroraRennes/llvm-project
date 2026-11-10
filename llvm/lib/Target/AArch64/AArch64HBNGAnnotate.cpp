@@ -1025,11 +1025,23 @@ AArch64HBNGAnnotate::generateGroups(MachineInstr &MI) {
   if (isHBNGSend(MI))
     return {genSendLines(MI)};
   switch (MI.getOpcode()) {
-  // adr, ldr(b|h|sw) and add (the AsmPrinter's lowering), not described.
+  // The jump-table dispatch, operands (dst, scratch, table, index), is
+  // emitted as three instructions, one group each:
+  //   adr  dst, label                   dst <- 0
+  //   ldrb scratch, [table, index]      scratch <- 0
+  //   add  dst, dst, scratch, lsl #2    dst <- dst | scratch
+  // (ldrh or ldrsw for wider entries). The label's address is a constant
+  // computed from PC. The table is read-only and holds constants, so the
+  // entry loaded is clean too: the index only selects which entry is read,
+  // and, as for any load, the address's tag does not reach the data.
   case AArch64::JumpTableDest32:
   case AArch64::JumpTableDest16:
-  case AArch64::JumpTableDest8:
-    return {{}, {}, {}};
+  case AArch64::JumpTableDest8: {
+    Register Dst = MI.getOperand(0).getReg();
+    Register Scratch = MI.getOperand(1).getReg();
+    return {writeReg(Dst, "0"), writeReg(Scratch, "0"),
+            writeReg(Dst, unionOf({*gprLoc(Dst), *gprLoc(Scratch)}))};
+  }
   default:
     break;
   }
