@@ -771,6 +771,8 @@ AArch64HBNGAnnotate::genAddress(MachineInstr &MI, const HBNGMemAccess &A) {
     return {Base, 0};
   if (A.isRegOffset()) {
     Register Rm = MI.getOperand(A.Offset).getReg();
+    if (Rm == AArch64::XZR || Rm == AArch64::WZR)
+      return {Base, 0}; // adds 0
     bool Signed = MI.getOperand(A.Offset + 1).getImm();
     bool DoShift = MI.getOperand(A.Offset + 2).getImm();
     const char *Kind = A.Mode == HBNGMemAccess::RegOffsetW
@@ -963,7 +965,11 @@ std::vector<std::string> AArch64HBNGAnnotate::genSendLines(MachineInstr &MI) {
   bool SendsFP = false;
   for (unsigned I = A->NumData; I-- > 0;) {
     Register R = getHBNGDataReg(MI, *A, I, TRI);
-    Lines.push_back("send X" + std::to_string(TRI->getEncodingValue(R)) + "\n");
+    // The zero register as an offset is sent too: a FIFO entry of 0.
+    Lines.push_back(R == AArch64::XZR
+                        ? std::string("send XZR\n")
+                        : "send X" + std::to_string(TRI->getEncodingValue(R)) +
+                              "\n");
     SendsFP |= R == AArch64::FP;
   }
   if (SendsFP)
