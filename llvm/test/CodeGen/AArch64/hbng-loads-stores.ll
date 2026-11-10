@@ -140,6 +140,37 @@
 ; ANNOT-NEXT:  .ascii "@12\n"
 ; ANNOT-NEXT:  .ascii "M[<X0> + 4 .. +4] <- X8\n"
 
+; A global: adrp gives the page (a clean value from PC), and the offset in the
+; page is the low 12 bits of the symbol's address, written by the linker into
+; the load: LO12 in the annotation. adrp's result is sent as a base.
+; SEND-LABEL: global_load:
+; SEND:       adrp x8, local
+; SEND-NEXT:  str x8, [x18]
+; SEND-NEXT:  ldr w0, [x8, :lo12:local]
+; ANNOT-LABEL: HBNG_global_load_annot:
+; ANNOT-NEXT:  .ascii "@0\n"
+; ANNOT-NEXT:  .ascii "X8 <- 0\n"
+; ANNOT-NEXT:  .ascii "@4\n"
+; ANNOT-NEXT:  .ascii "send X8\n"
+; ANNOT-NEXT:  .ascii "@8\n"
+; ANNOT-NEXT:  .ascii "X0 <- M[<X8> + LO12 .. +4]\n"
+
+; A global that may be preempted: its address is loaded from the GOT, at the
+; low 12 bits of the GOT entry's address (":got_lo12:"), LO12 too.
+; SEND-LABEL: got_store:
+; SEND:       adrp x8, :got:extern
+; SEND-NEXT:  str x8, [x18]
+; SEND-NEXT:  ldr x8, [x8, :got_lo12:extern]
+; SEND-NEXT:  str x8, [x18]
+; SEND-NEXT:  str w0, [x8]
+; ANNOT-LABEL: HBNG_got_store_annot:
+; ANNOT:       .ascii "@8\n"
+; ANNOT-NEXT:  .ascii "X8 <- M[<X8> + LO12 .. +8]\n"
+; ANNOT-NEXT:  .ascii "@12\n"
+; ANNOT-NEXT:  .ascii "send X8\n"
+; ANNOT-NEXT:  .ascii "@16\n"
+; ANNOT-NEXT:  .ascii "M[<X8> .. +4] <- X0\n"
+
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "aarch64-unknown-linux-musl"
 
@@ -252,6 +283,19 @@ define void @rcpc_imm(ptr %p) "target-features"="+rcpc-immo" {
   %v = load atomic i32, ptr %a acquire, align 4
   %b = getelementptr inbounds i8, ptr %p, i64 4
   store atomic i32 %v, ptr %b release, align 4
+  ret void
+}
+
+@local = dso_local global i32 0
+@extern = global i32 0
+
+define i32 @global_load() {
+  %v = load i32, ptr @local
+  ret i32 %v
+}
+
+define void @got_store(i32 %v) {
+  store i32 %v, ptr @extern
   ret void
 }
 

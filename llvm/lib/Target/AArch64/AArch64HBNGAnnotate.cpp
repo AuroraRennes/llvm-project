@@ -762,7 +762,7 @@ std::string AArch64HBNGAnnotate::genSPWriteLine(MachineInstr &MI,
 }
 
 // The address of a load or store: a term (the base's value, and a register
-// offset added to it) and an offset in bytes. The address of a
+// offset or LO12 added to it) and an offset in bytes. The address of a
 // post-indexed access is the base before the write-back.
 std::pair<std::string, int64_t>
 AArch64HBNGAnnotate::genAddress(MachineInstr &MI, const HBNGMemAccess &A) {
@@ -780,8 +780,12 @@ AArch64HBNGAnnotate::genAddress(MachineInstr &MI, const HBNGMemAccess &A) {
                 std::to_string(DoShift ? Log2_32(A.Size) : 0) + ")",
             0};
   }
-  int64_t Imm = MI.getOperand(A.Offset).getImm();
-  return {Base, Imm * (A.isScaledImm() ? int64_t(A.Size) : 1)};
+  const MachineOperand &Off = MI.getOperand(A.Offset);
+  // A symbol's low 12 bits (":lo12:sym", ":got_lo12:sym"): the linker writes
+  // the offset into the instruction, LO12 names it.
+  if (!Off.isImm())
+    return {Base + " + LO12", 0};
+  return {Base, Off.getImm() * (A.isScaledImm() ? int64_t(A.Size) : 1)};
 }
 
 // Size bytes of memory at Term + Off.
@@ -813,12 +817,6 @@ std::vector<std::string> AArch64HBNGAnnotate::genMemAnnotation(
     MachineInstr &MI, const HBNGMemAccess &A) {
   if (A.Vec != HBNGMemAccess::NotVec)
     return genVecMemAnnotation(MI, A);
-  // A symbol's low 12 bits as the offset (":lo12:sym", ":got_lo12:sym"),
-  // which the linker writes into the instruction: not described.
-  if (A.Offset >= 0 && !MI.getOperand(A.Offset).isReg() &&
-      !MI.getOperand(A.Offset).isImm())
-    return {"unsupported \"" + TII->getName(MI.getOpcode()).str() +
-            " :lo12:\"\n"};
   std::vector<std::string> Annotations;
   auto [Term, Off] = genAddress(MI, A);
   for (unsigned I = 0; I < A.NumData; ++I) {
