@@ -13,8 +13,8 @@
 
 ; ON-LABEL: load:
 ; ON-NEXT:     .cfi_startproc
-; ON-NEXT:   HBNG_load:
 ; ON-NEXT:   // %bb.0:
+; ON-NEXT:   HBNG_load:
 ; ON-NEXT:     str x0, [x18]
 ; ON-NEXT:     ldr x0, [x0]
 ; ON:          .section .hbngannot

@@ -4,7 +4,6 @@
 # RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -start-before=hbng-send-stm %s -o - | FileCheck %s
 
 # CHECK-LABEL: HBNG_zero_index:
-# CHECK-NEXT:  // %bb.0:
 # CHECK-NEXT:  stp xzr, x0, [x18]
 # CHECK-NEXT:  str xzr, [x0, xzr, lsl #3]
 # CHECK-LABEL: HBNG_zero_index_annot:

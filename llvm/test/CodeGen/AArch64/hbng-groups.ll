@@ -7,10 +7,10 @@
 
 ; The load block falls through into the return.
 ; ASM-LABEL:   HBNG_fall_n_1:
-; ASM-NEXT:    // %bb.1:
 ; ASM-NEXT:    str x1, [x18]
 ; ASM-NEXT:    ldr w8, [x1]
 ; ASM-NEXT:    add w0, w8, w0
+; ASM-NEXT:    .LBB{{[0-9_]+}}:
 ; ASM-NEXT:    HBNG_fall_n_2:
 ; CHECK-LABEL: HBNG_fall_n_1_annot:
 ; CHECK-NEXT:  .ascii "@0\n"

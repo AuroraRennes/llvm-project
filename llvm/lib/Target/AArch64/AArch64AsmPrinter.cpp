@@ -1221,14 +1221,16 @@ void AArch64AsmPrinter::emitFunctionBodyStart() {
 }
 
 void AArch64AsmPrinter::emitBasicBlockStart(const MachineBasicBlock &MBB) {
-  // HBNG: emit the block's label from the block table, if the function has
-  // one (not for hbng_no_instr functions), then the block itself.
+  // HBNG: the block itself, then its label from the block table, if the
+  // function has one (not for hbng_no_instr functions). After the block's
+  // alignment: the padding before a block is not part of it (a branch lands
+  // after it), and the label is the address the block starts at.
+  AsmPrinter::emitBasicBlockStart(MBB);
   auto *FI = MF->getInfo<AArch64FunctionInfo>();
   if (!FI->BBAnnotationInfos.empty()) {
     OutStreamer->emitLabel(FI->BBAnnotationInfos[FI->BBTIndex].BBSymbol);
     ++FI->BBTIndex;
   }
-  AsmPrinter::emitBasicBlockStart(MBB);
 }
 
 
