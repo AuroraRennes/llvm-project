@@ -1449,7 +1449,9 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::MRS:
       Annotations = genClear(MI);
       break;
-    // Barriers and hints move no data.
+    // Barriers, hints and prefetches move no data.
+    case AArch64::PRFMui: case AArch64::PRFMl: case AArch64::PRFMroW:
+    case AArch64::PRFMroX: case AArch64::PRFUMi:
     case AArch64::DMB: case AArch64::DSB: case AArch64::ISB: case AArch64::HINT:
     case AArch64::CLREX:           // Cancel exclusive access
     case AArch64::CFI_INSTRUCTION:
