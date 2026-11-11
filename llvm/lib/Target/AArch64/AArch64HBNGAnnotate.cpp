@@ -1292,6 +1292,15 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     HBNG_FCVT_INT(NS) HBNG_FCVT_INT(NU) HBNG_FCVT_INT(PS) HBNG_FCVT_INT(PU)
     HBNG_FCVT_INT(ZS) HBNG_FCVT_INT(ZU)
 #undef HBNG_FCVT_INT
+    // The fixed-point forms (a number of fraction bits)
+    case AArch64::FCVTZSSWHri: case AArch64::FCVTZSSWSri: case AArch64::FCVTZSSWDri:
+    case AArch64::FCVTZSSXHri: case AArch64::FCVTZSSXSri: case AArch64::FCVTZSSXDri:
+    case AArch64::FCVTZUSWHri: case AArch64::FCVTZUSWSri: case AArch64::FCVTZUSWDri:
+    case AArch64::FCVTZUSXHri: case AArch64::FCVTZUSXSri: case AArch64::FCVTZUSXDri:
+    case AArch64::SCVTFSWHri: case AArch64::SCVTFSWSri: case AArch64::SCVTFSWDri:
+    case AArch64::SCVTFSXHri: case AArch64::SCVTFSXSri: case AArch64::SCVTFSXDri:
+    case AArch64::UCVTFSWHri: case AArch64::UCVTFSWSri: case AArch64::UCVTFSWDri:
+    case AArch64::UCVTFSXHri: case AArch64::UCVTFSXSri: case AArch64::UCVTFSXDri:
     case AArch64::SCVTFUWHri: case AArch64::SCVTFUWSri: case AArch64::SCVTFUWDri:
     case AArch64::SCVTFUXHri: case AArch64::SCVTFUXSri: case AArch64::SCVTFUXDri:
     case AArch64::UCVTFUWHri: case AArch64::UCVTFUWSri: case AArch64::UCVTFUWDri:
