@@ -1309,10 +1309,15 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::FMOVS0: case AArch64::FMOVD0:
       Annotations = genClear(MI);
       break;
-    // Register move
-    case AArch64::FMOVDr: case AArch64::FMOVDXr: case AArch64::FMOVXDr:
-    case AArch64::FMOVSr: case AArch64::FMOVSWr: case AArch64::FMOVWSr:
-    case AArch64::FMOVHr: case AArch64::FMOVHWr: case AArch64::FMOVHXr:
+    // Register move: between FP/SIMD registers byte for byte ("per 1"), the
+    // bytes above the scalar cleared; to or from a W/X register, its one tag.
+    case AArch64::FMOVDr: case AArch64::FMOVSr: case AArch64::FMOVHr:
+      Annotations = writeReg(MI.getOperand(0).getReg(),
+                             vecWhole(MI.getOperand(1).getReg()) + " per 1");
+      break;
+    case AArch64::FMOVDXr: case AArch64::FMOVXDr:
+    case AArch64::FMOVSWr: case AArch64::FMOVWSr:
+    case AArch64::FMOVHWr: case AArch64::FMOVHXr:
     case AArch64::FMOVWHr: case AArch64::FMOVXHr:
       Annotations = genDataflow(MI);
       break;

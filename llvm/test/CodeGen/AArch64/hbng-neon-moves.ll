@@ -89,6 +89,20 @@
 ; CHECK-NEXT:  .ascii "X0 <- V0[0:7]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
+; fmov d0, d1
+; CHECK-LABEL: HBNG_fmovdd_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V1[0:7] per 1\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
+; fmov s0, s1
+; CHECK-LABEL: HBNG_fmovss_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "V0[0:3] <- V1[0:3] per 1\n"
+; CHECK-NEXT:  .ascii "V0[4:15] <- 0\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
 ; mov v0.d[1], x0
 ; CHECK-LABEL: HBNG_fmovhigh_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
@@ -205,6 +219,16 @@ define i64 @fmovxd(double %a) {
 entry:
   %0 = bitcast double %a to i64
   ret i64 %0
+}
+
+define double @fmovdd(double %a, double %b) {
+entry:
+  ret double %b
+}
+
+define float @fmovss(float %a, float %b) {
+entry:
+  ret float %b
 }
 
 define <2 x i64> @fmovhigh(<2 x i64> %v, i64 %x) {
