@@ -1389,6 +1389,13 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
                                  " per 1");
       break;
     }
+    // CRC32 (and CRC32C): the new checksum from the old one and the data.
+    case AArch64::CRC32Brr: case AArch64::CRC32Hrr:
+    case AArch64::CRC32Wrr: case AArch64::CRC32Xrr:
+    case AArch64::CRC32CBrr: case AArch64::CRC32CHrr:
+    case AArch64::CRC32CWrr: case AArch64::CRC32CXrr:
+      Annotations = genDataflow(MI);
+      break;
     //=== BITMANIP ===//
     case AArch64::SBFMXri: case AArch64::SBFMWri:
     case AArch64::UBFMXri: case AArch64::UBFMWri:
