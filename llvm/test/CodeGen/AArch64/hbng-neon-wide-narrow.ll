@@ -2,6 +2,9 @@
 ; input and output element sizes ("per <in>:<out>", in bytes). The "2" forms
 ; of widening read the upper half of their sources (V<n>[8:15]); those of
 ; narrowing write the upper half of the destination and keep the lower one.
+; An extension by whole bytes (ushll, sshll, shll) moves bytes: a byte map, the
+; bytes shifted in and those above the element 0, or, signed, copies of the
+; element's top byte.
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; ushll v0.4s, v0.4h, #3
@@ -16,34 +19,40 @@
 ; CHECK-NEXT:  .ascii "V0[0:15] <- V0[8:15] per 2:4\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
+; ushll v0.4s, v0.4h, #8
+; CHECK-LABEL: HBNG_ushll8_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [0 V0[0:1] 0 0 V0[2:3] 0 0 V0[4:5] 0 0 V0[6:7] 0]\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
 ; ushll v0.8h, v0.8b, #0
 ; CHECK-LABEL: HBNG_uxtl_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:7] per 1:2\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [V0[0] 0 V0[1] 0 V0[2] 0 V0[3] 0 V0[4] 0 V0[5] 0 V0[6] 0 V0[7] 0]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; ushll2 v0.8h, v0.16b, #0
 ; CHECK-LABEL: HBNG_uxtl2_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:15] <- V0[8:15] per 1:2\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [V0[8] 0 V0[9] 0 V0[10] 0 V0[11] 0 V0[12] 0 V0[13] 0 V0[14] 0 V0[15] 0]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; sshll v0.2d, v0.2s, #0
 ; CHECK-LABEL: HBNG_sxtl_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:7] per 4:8\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [V0[0:3] V0[3] V0[3] V0[3] V0[3:7] V0[7] V0[7] V0[7] V0[7]]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; shll v0.4s, v0.4h, #16
 ; CHECK-LABEL: HBNG_shll_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:7] per 2:4\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [0 0 V0[0:1] 0 0 V0[2:3] 0 0 V0[4:5] 0 0 V0[6:7]]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; shll2 v0.4s, v0.8h, #16
 ; CHECK-LABEL: HBNG_shll2_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:15] <- V0[8:15] per 2:4\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- [0 0 V0[8:9] 0 0 V0[10:11] 0 0 V0[12:13] 0 0 V0[14:15]]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; umull v0.2d, v0.2s, v1.2s
@@ -117,6 +126,13 @@ entry:
   %shuffle.i = shufflevector <8 x i16> %a, <8 x i16> poison, <4 x i32> <i32 4, i32 5, i32 6, i32 7>
   %0 = zext <4 x i16> %shuffle.i to <4 x i32>
   %vshll_n = shl nuw nsw <4 x i32> %0, splat (i32 3)
+  ret <4 x i32> %vshll_n
+}
+
+define <4 x i32> @ushll8(<4 x i16> %a) {
+entry:
+  %0 = zext <4 x i16> %a to <4 x i32>
+  %vshll_n = shl nuw nsw <4 x i32> %0, splat (i32 8)
   ret <4 x i32> %vshll_n
 }
 

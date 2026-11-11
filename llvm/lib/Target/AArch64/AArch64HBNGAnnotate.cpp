@@ -305,8 +305,11 @@ std::vector<std::string> AArch64HBNGAnnotate::genClear(MachineInstr &MI) {
 //     lane i from lane i of each source ("per 4": lanes of 4 bytes)
 //   and  v0.16b, v1.16b, v2.16b   V0[0:15] <- V1[0:15] | V2[0:15] per 1
 //     byte k from byte k
-//   ushll v0.4s, v1.4h, #0        V0[0:15] <- V1[0:7] per 2:4
+//   umull v0.4s, v1.4h, v2.4h     V0[0:15] <- V1[0:7] | V2[0:7] per 2:4
 //     lanes of 2 bytes in, of 4 bytes out
+//   ushll v0.4s, v1.4h, #8        V0[0:15] <- [0 V1[0:1] 0 0 V1[2:3] 0 ...]
+//     an extension by whole bytes moves bytes: the ones shifted in and those
+//     above the element are 0 (sshll: copies of its top byte)
 //   addp v0.4s, v1.4s, v2.4s      V0[0:7] <- V1[0:15] per 8:4
 //                                 V0[8:15] <- V2[0:15] per 8:4
 //     each lane out from two neighbouring lanes in
@@ -346,9 +349,12 @@ static std::string per(unsigned In, unsigned Out) {
   return S;
 }
 
+// A byte map entry for a byte that gets no tag.
+static constexpr unsigned ZeroByte = ~0u;
+
 // The byte map of Map, entries into the bytes of Srcs taken one after the
-// other: runs of consecutive bytes of one source operand, ascending (V1[4:7])
-// or descending (V1[7:4]).
+// other (ZeroByte: "0"): runs of consecutive bytes of one source operand,
+// ascending (V1[4:7]) or descending (V1[7:4]).
 std::string AArch64HBNGAnnotate::byteMap(ArrayRef<Register> Srcs,
                                          ArrayRef<unsigned> Map) {
   struct Byte {
@@ -360,10 +366,15 @@ std::string AArch64HBNGAnnotate::byteMap(ArrayRef<Register> Srcs,
       Bytes.push_back({S, TRI->getEncodingValue(Srcs[S]), B});
   SmallVector<std::string, 16> Runs;
   for (unsigned K = 0; K < Map.size();) {
+    if (Map[K] == ZeroByte) {
+      Runs.push_back("0");
+      ++K;
+      continue;
+    }
     Byte First = Bytes[Map[K]];
     unsigned Hi = First.B;
     int Dir = 0;
-    for (++K; K < Map.size(); ++K) {
+    for (++K; K < Map.size() && Map[K] != ZeroByte; ++K) {
       Byte Next = Bytes[Map[K]];
       int D = Next.Src != First.Src ? 0
               : Next.B == Hi + 1    ? 1
@@ -676,6 +687,24 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     SmallVector<Register, 4> Rs = Srcs(1);
     if (!AllOf(Rs, SB))
       return Unsupported;
+    // An extension by whole bytes (shll shifts by the element size): byte J
+    // of lane I from byte J - S of element I, 0 below, and above 0 or, signed,
+    // the element's top byte.
+    bool Signed = NN->Mn == "SSHLL";
+    if (Signed || NN->Mn == "USHLL" || NN->Mn == "SHLL") {
+      unsigned Shift = NN->Mn == "SHLL" ? 8 * E : MI.getOperand(2).getImm();
+      if (Shift % 8 == 0) {
+        unsigned S = Shift / 8, Lo = SB - 8;
+        SmallVector<unsigned, 16> Map;
+        for (unsigned I = 0; I < 8 / E; ++I)
+          for (unsigned J = 0; J < 2 * E; ++J)
+            Map.push_back(J < S          ? ZeroByte
+                          : J - S < E    ? Lo + I * E + J - S
+                          : Signed       ? Lo + I * E + E - 1
+                                         : ZeroByte);
+        return writeReg(Rd, byteMap(Rs, Map));
+      }
+    }
     SmallVector<std::string, 2> L;
     for (Register R : Rs)
       L.push_back(vecRange(R, SB - 8, 8));
