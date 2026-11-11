@@ -1167,9 +1167,18 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
 
   switch (MI.getOpcode()) {
     //=== ARITHMETIC ===//
-    // One Register or Immediate
+    // One Register or Immediate (rounding to an integral value, square root:
+    // every byte of the scalar from every byte of its source)
     case AArch64::FNEGSr: case AArch64::FNEGDr:
     case AArch64::FABSSr: case AArch64::FABSDr:
+    case AArch64::FSQRTSr: case AArch64::FSQRTDr:
+    case AArch64::FRINTASr: case AArch64::FRINTADr:
+    case AArch64::FRINTISr: case AArch64::FRINTIDr:
+    case AArch64::FRINTMSr: case AArch64::FRINTMDr:
+    case AArch64::FRINTNSr: case AArch64::FRINTNDr:
+    case AArch64::FRINTPSr: case AArch64::FRINTPDr:
+    case AArch64::FRINTXSr: case AArch64::FRINTXDr:
+    case AArch64::FRINTZSr: case AArch64::FRINTZDr:
       Annotations = genDataflow(MI);
       break;
     // Two registers
