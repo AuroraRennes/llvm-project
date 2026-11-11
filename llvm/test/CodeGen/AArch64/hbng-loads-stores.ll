@@ -5,8 +5,9 @@
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s --check-prefix=SEND
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s --check-prefix=ANNOT
 
-; Store-exclusive: the base is the last operand, the status register is
-; written with an untainted value, and the send comes after the instruction
+; Store-exclusive: the base is the last operand, each byte keeps its tag or
+; takes the register's (the store may fail), the status register is written
+; with an untainted value, and the send comes after the instruction
 ; (see hbng-exclusive.ll).
 ; SEND-LABEL: excl_add:
 ; SEND:       str x8, [x18]
@@ -21,7 +22,14 @@
 ; ANNOT-NEXT:  .ascii "@8\n"
 ; ANNOT-NEXT:  .ascii "X9 <- X0 | X1\n"
 ; ANNOT-NEXT:  .ascii "@12\n"
-; ANNOT-NEXT:  .ascii "M[<X8> .. +8] <- X9\n"
+; ANNOT-NEXT:  .ascii "M[<X8>] <- M[<X8>] | X9\n"
+; ANNOT-NEXT:  .ascii "M[<X8> + 1] <- M[<X8> + 1] | X9\n"
+; ANNOT-NEXT:  .ascii "M[<X8> + 2] <- M[<X8> + 2] | X9\n"
+; ANNOT-NEXT:  .ascii "M[<X8> + 3] <- M[<X8> + 3] | X9\n"
+; ANNOT-NEXT:  .ascii "M[<X8> + 4] <- M[<X8> + 4] | X9\n"
+; ANNOT-NEXT:  .ascii "M[<X8> + 5] <- M[<X8> + 5] | X9\n"
+; ANNOT-NEXT:  .ascii "M[<X8> + 6] <- M[<X8> + 6] | X9\n"
+; ANNOT-NEXT:  .ascii "M[<X8> + 7] <- M[<X8> + 7] | X9\n"
 ; ANNOT-NEXT:  .ascii "X10 <- 0\n"
 
 ; Register offsets: shift by log2 of the access size; a W offset is sent as

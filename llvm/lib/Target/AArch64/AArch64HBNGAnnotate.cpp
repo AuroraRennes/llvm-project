@@ -877,6 +877,7 @@ std::vector<std::string> AArch64HBNGAnnotate::genLinkAnnotation() {
 // write-back of a tracked base, then the store-exclusive status:
 //   Rt <- M[<Rn> + off .. +size]                  (load)
 //   M[<Rn> + off .. +size] <- Rt                  (store)
+//   M[<Rn> + off + i] <- M[<Rn> + off + i] | Rt   (store-exclusive, per byte)
 //   <Rn> <- <Rn> + b                              (write-back of SP or FP)
 //   Ws <- 0                                       (store-exclusive status)
 // An FP/SIMD register moves byte for byte ("per 1"), a general register has
@@ -900,7 +901,20 @@ std::vector<std::string> AArch64HBNGAnnotate::genMemAnnotation(
       continue;
     }
     std::optional<std::string> Src = srcLoc(Rt);
-    Annotations.push_back(Mem + " <- " + (Src ? *Src + Per : "0") + "\n");
+    if (A.Status < 0) {
+      Annotations.push_back(Mem + " <- " + (Src ? *Src + Per : "0") + "\n");
+      continue;
+    }
+    // A store-exclusive may fail and leave memory as it was: each byte keeps
+    // its tag or takes the register's, one line per byte (a range on both
+    // sides would give every byte the tags of all of them). Storing the zero
+    // register keeps the bytes.
+    if (!Src)
+      continue;
+    for (unsigned B = 0; B < A.Size; ++B) {
+      std::string Byte = memBytes(Term, Off + I * A.Size + B, 1);
+      Annotations.push_back(Byte + " <- " + Byte + " | " + *Src + "\n");
+    }
   }
 
   Register Base = MI.getOperand(A.Base).getReg();
