@@ -1297,14 +1297,15 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
       Annotations = writeReg(MI.getOperand(0).getReg(),
                              vecRange(MI.getOperand(1).getReg(), 8, 8));
       break;
-    // Scalar copy of a lane (also written MOV): (Rd, Vn, idx), the bytes
-    // above the scalar cleared.
+    // Scalar copy of a lane (also written MOV): (Rd, Vn, idx), byte for byte
+    // ("per 1"), the bytes above the scalar cleared.
     case AArch64::DUPi8: case AArch64::DUPi16:
     case AArch64::DUPi32: case AArch64::DUPi64: {
       unsigned E = regBytes(MI.getOperand(0).getReg());
       Register Rn = MI.getOperand(1).getReg();
       Annotations = writeReg(MI.getOperand(0).getReg(),
-                             vecRange(Rn, MI.getOperand(2).getImm() * E, E));
+                             vecRange(Rn, MI.getOperand(2).getImm() * E, E) +
+                                 " per 1");
       break;
     }
     //=== BITMANIP ===//

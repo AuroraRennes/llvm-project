@@ -2,7 +2,8 @@
 ; V<n>[lo:hi] and keeps the other bytes; a lane read names its bytes. An X/W
 ; register has one tag: reading a V register into it takes the union of the
 ; bytes read, and writing it to a V register gives its tag to every byte
-; written (dup). Scalar and 64-bit destinations clear the bytes above, on
+; written (dup). A V register copied to a V register moves byte for byte
+; ("per 1"). Scalar and 64-bit destinations clear the bytes above, on
 ; their own line. An immediate move is a clear.
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
@@ -51,8 +52,15 @@
 ; mov s0, v0.s[2]
 ; CHECK-LABEL: HBNG_dups_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:3] <- V0[8:11]\n"
+; CHECK-NEXT:  .ascii "V0[0:3] <- V0[8:11] per 1\n"
 ; CHECK-NEXT:  .ascii "V0[4:15] <- 0\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
+; mov d0, v0.d[1]
+; CHECK-LABEL: HBNG_dupd_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[8:15] per 1\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; dup v0.16b, w0
@@ -165,6 +173,12 @@ define float @dups(<4 x float> %a) {
 entry:
   %vgetq_lane = extractelement <4 x float> %a, i64 2
   ret float %vgetq_lane
+}
+
+define double @dupd(<2 x double> %a) {
+entry:
+  %vgetq_lane = extractelement <2 x double> %a, i64 1
+  ret double %vgetq_lane
 }
 
 define <16 x i8> @dupgpr(i8 %a) {
