@@ -5,6 +5,8 @@
 ; An extension by whole bytes (ushll, sshll, shll) moves bytes: a byte map, the
 ; bytes shifted in and those above the element 0, or, signed, copies of the
 ; element's top byte.
+; The wide forms (saddw) add a source as wide as the result, lane by lane: one
+; line per lane.
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; ushll v0.4s, v0.4h, #3
@@ -113,6 +115,20 @@
 ; CHECK-LABEL: HBNG_umlal_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "unsupported \"UMLALv2i32_v2i64\"\n"
+; saddw v0.2d, v0.2d, v1.2s
+; CHECK-LABEL: HBNG_saddw_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:3]\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- V0[8:15] | V1[4:7]\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
+; saddw2 v0.2d, v0.2d, v1.4s
+; CHECK-LABEL: HBNG_saddw2_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[8:11]\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- V0[8:15] | V1[12:15]\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
 
 define <4 x i32> @ushll(<4 x i16> %a) {
 entry:
@@ -231,5 +247,20 @@ declare <4 x i16> @llvm.aarch64.neon.sqxtn.v4i16(<4 x i32>)
 define <2 x i64> @umlal(<2 x i64> %acc, <2 x i32> %a, <2 x i32> %b) {
   %m = call <2 x i64> @llvm.aarch64.neon.umull.v2i64(<2 x i32> %a, <2 x i32> %b)
   %r = add <2 x i64> %acc, %m
+  ret <2 x i64> %r
+}
+
+define <2 x i64> @saddw(<2 x i64> %a, <2 x i32> %b) {
+entry:
+  %e = sext <2 x i32> %b to <2 x i64>
+  %r = add <2 x i64> %a, %e
+  ret <2 x i64> %r
+}
+
+define <2 x i64> @saddw2(<2 x i64> %a, <4 x i32> %b) {
+entry:
+  %h = shufflevector <4 x i32> %b, <4 x i32> poison, <2 x i32> <i32 2, i32 3>
+  %e = sext <2 x i32> %h to <2 x i64>
+  %r = add <2 x i64> %a, %e
   ret <2 x i64> %r
 }

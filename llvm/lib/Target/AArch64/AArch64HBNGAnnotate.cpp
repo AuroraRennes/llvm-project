@@ -502,6 +502,8 @@ static NeonFamily getNeonFamily(StringRef Mn) {
     return NF_Wide;
   if (Is({"USUBL", "SSUBL"}))
     return NF_Wide;
+  if (Is({"UADDW", "SADDW", "USUBW", "SSUBW"}))
+    return NF_Wide;
   if (Is({"FCVTL"}))
     return NF_Wide;
   if (Is({"XTN"}))
@@ -685,6 +687,19 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     if (Indexed || Tied || (SB != 8 && SB != 16) || DB != 16)
       return Unsupported;
     SmallVector<Register, 4> Rs = Srcs(1);
+    // The wide forms (uaddw): the first source as wide as the result, lane by
+    // lane, the second widened; one line per lane.
+    if (is_contained({"UADDW", "SADDW", "USUBW", "SSUBW"}, NN->Mn)) {
+      if (Rs.size() != 2 || !AllOf(Rs[0], 16) || !AllOf(Rs[1], SB))
+        return Unsupported;
+      std::vector<std::string> Lines;
+      for (unsigned Lo = 0; Lo < 16; Lo += 2 * E)
+        Lines.push_back(vecRange(Rd, Lo, 2 * E) + " <- " +
+                        unionOf({vecRange(Rs[0], Lo, 2 * E),
+                                 vecRange(Rs[1], SB - 8 + Lo / 2, E)}) +
+                        "\n");
+      return Lines;
+    }
     if (!AllOf(Rs, SB))
       return Unsupported;
     // An extension by whole bytes (shll shifts by the element size): byte J
