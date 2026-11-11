@@ -5,8 +5,9 @@
 ; An extension by whole bytes (ushll, sshll, shll) moves bytes: a byte map, the
 ; bytes shifted in and those above the element 0, or, signed, copies of the
 ; element's top byte.
-; The wide forms (saddw) add a source as wide as the result, lane by lane: one
-; line per lane.
+; The wide forms (saddw) add a source as wide as the result, and the
+; accumulating ones (umlal) the old destination, lane by lane: one line per
+; lane.
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; ushll v0.4s, v0.4h, #3
@@ -109,12 +110,13 @@
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
-
-; The accumulating long forms read a destination of the output element size
-; with sources of the input size; not described yet, they stay unsupported.
+; umlal v0.2d, v1.2s, v2.2s
 ; CHECK-LABEL: HBNG_umlal_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "unsupported \"UMLALv2i32_v2i64\"\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:3] | V2[0:3]\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- V0[8:15] | V1[4:7] | V2[4:7]\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
 ; saddw v0.2d, v0.2d, v1.2s
 ; CHECK-LABEL: HBNG_saddw_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
@@ -127,6 +129,13 @@
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[8:11]\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- V0[8:15] | V1[12:15]\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
+; umlal2 v0.2d, v1.4s, v2.4s
+; CHECK-LABEL: HBNG_umlal2_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[8:11] | V2[8:11]\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- V0[8:15] | V1[12:15] | V2[12:15]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 
@@ -262,5 +271,16 @@ entry:
   %h = shufflevector <4 x i32> %b, <4 x i32> poison, <2 x i32> <i32 2, i32 3>
   %e = sext <2 x i32> %h to <2 x i64>
   %r = add <2 x i64> %a, %e
+  ret <2 x i64> %r
+}
+
+define <2 x i64> @umlal2(<2 x i64> %acc, <4 x i32> %a, <4 x i32> %b) {
+entry:
+  %ha = shufflevector <4 x i32> %a, <4 x i32> poison, <2 x i32> <i32 2, i32 3>
+  %hb = shufflevector <4 x i32> %b, <4 x i32> poison, <2 x i32> <i32 2, i32 3>
+  %ea = zext <2 x i32> %ha to <2 x i64>
+  %eb = zext <2 x i32> %hb to <2 x i64>
+  %m = mul <2 x i64> %ea, %eb
+  %r = add <2 x i64> %acc, %m
   ret <2 x i64> %r
 }

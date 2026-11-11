@@ -504,6 +504,9 @@ static NeonFamily getNeonFamily(StringRef Mn) {
     return NF_Wide;
   if (Is({"UADDW", "SADDW", "USUBW", "SSUBW"}))
     return NF_Wide;
+  if (Is({"UMLAL", "SMLAL", "UMLSL", "SMLSL", "SQDMLAL", "SQDMLSL", "UABAL",
+          "SABAL"}))
+    return NF_Wide;
   if (Is({"FCVTL"}))
     return NF_Wide;
   if (Is({"XTN"}))
@@ -684,20 +687,31 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     // The source arrangement is in the name; the "2" forms read the upper
     // half of their (128-bit) sources.
     unsigned SB = NN->N * E;
-    if (Indexed || Tied || (SB != 8 && SB != 16) || DB != 16)
+    if (Indexed || (SB != 8 && SB != 16) || DB != 16)
+      return Unsupported;
+    // The wide forms (uaddw: the first source as wide as the result) and the
+    // accumulating ones (umlal: the old destination), lane by lane, with the
+    // other sources widened; one line per lane.
+    bool WideFirst = is_contained({"UADDW", "SADDW", "USUBW", "SSUBW"}, NN->Mn);
+    bool Accumulates =
+        is_contained({"UMLAL", "SMLAL", "UMLSL", "SMLSL", "SQDMLAL", "SQDMLSL",
+                      "UABAL", "SABAL"},
+                     NN->Mn);
+    if (Tied != Accumulates)
       return Unsupported;
     SmallVector<Register, 4> Rs = Srcs(1);
-    // The wide forms (uaddw): the first source as wide as the result, lane by
-    // lane, the second widened; one line per lane.
-    if (is_contained({"UADDW", "SADDW", "USUBW", "SSUBW"}, NN->Mn)) {
-      if (Rs.size() != 2 || !AllOf(Rs[0], 16) || !AllOf(Rs[1], SB))
+    if (WideFirst || Accumulates) {
+      // Rs[0] is the wide source, or the old destination (tied).
+      ArrayRef<Register> Narrow = ArrayRef<Register>(Rs).drop_front();
+      if (Narrow.empty() || !AllOf(Rs[0], 16) || !AllOf(Narrow, SB))
         return Unsupported;
       std::vector<std::string> Lines;
-      for (unsigned Lo = 0; Lo < 16; Lo += 2 * E)
-        Lines.push_back(vecRange(Rd, Lo, 2 * E) + " <- " +
-                        unionOf({vecRange(Rs[0], Lo, 2 * E),
-                                 vecRange(Rs[1], SB - 8 + Lo / 2, E)}) +
-                        "\n");
+      for (unsigned Lo = 0; Lo < 16; Lo += 2 * E) {
+        SmallVector<std::string, 3> L = {vecRange(Rs[0], Lo, 2 * E)};
+        for (Register R : Narrow)
+          L.push_back(vecRange(R, SB - 8 + Lo / 2, E));
+        Lines.push_back(vecRange(Rd, Lo, 2 * E) + " <- " + unionOf(L) + "\n");
+      }
       return Lines;
     }
     if (!AllOf(Rs, SB))
