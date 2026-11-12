@@ -1,7 +1,8 @@
 ; System registers and barriers: an mrs gives an untagged value (the thread
 ; pointer, FPCR, counters are not data the program read or received), an msr
 ; writes nothing (NZCV saved across a call and restored: the flags carry no
-; tag), and a barrier moves no data.
+; tag; msr daifset/daifclr: interrupts masked or unmasked), and a barrier
+; moves no data.
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; CHECK-LABEL: HBNG_tp_annot:
@@ -61,6 +62,16 @@
 ; CHECK-NEXT:  .ascii "<SP> <- <SP> + 32\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
+; msr DAIFSet, #2
+; CHECK-LABEL: HBNG_mask_irq_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
+; msr DAIFClr, #2
+; CHECK-LABEL: HBNG_unmask_irq_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
 
 define ptr @tp() {
   %p = call ptr @llvm.thread.pointer.p0()
@@ -93,6 +104,16 @@ define i32 @nzcv_across_call(i32 %s0, i32 %s1, i32 %s2, i32 %s3, i32 %x, i32 %y)
   ret i32 %p
 }
 
+define void @mask_irq() {
+  call void @llvm.write_register.i64(metadata !0, i64 2)
+  ret void
+}
+
+define void @unmask_irq() {
+  call void @llvm.write_register.i64(metadata !1, i64 2)
+  ret void
+}
+
 declare ptr @llvm.thread.pointer.p0()
 
 declare i32 @callee(i32)
@@ -100,3 +121,8 @@ declare i32 @callee(i32)
 declare i64 @llvm.aarch64.get.fpcr()
 
 declare void @llvm.aarch64.set.fpcr(i64)
+
+declare void @llvm.write_register.i64(metadata, i64)
+
+!0 = !{!"daifset"}
+!1 = !{!"daifclr"}

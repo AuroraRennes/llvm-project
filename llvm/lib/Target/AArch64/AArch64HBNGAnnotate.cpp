@@ -1619,6 +1619,14 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     // Writing one drops the tag (NZCV saved and restored around a call too).
     case AArch64::MSR: case AArch64::MSR_FPCR:
       break;
+    // Masking or unmasking exceptions (msr daifset, #2: IRQs masked) moves no
+    // data. Not the other PSTATE fields: spsel changes which register sp is.
+    case AArch64::MSRpstateImm4: {
+      unsigned Field = MI.getOperand(0).getImm();
+      if (Field != AArch64PState::DAIFSet && Field != AArch64PState::DAIFClr)
+        Annotations.push_back(Unsupported + "\n");
+      break;
+    }
     // Barriers, hints and prefetches move no data.
     case AArch64::PRFMui: case AArch64::PRFMl: case AArch64::PRFMroW:
     case AArch64::PRFMroX: case AArch64::PRFUMi:
