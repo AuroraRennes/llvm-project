@@ -1,6 +1,9 @@
 ; Pairwise NEON operations: output element i from input elements 2i and 2i+1
 ; of the sources taken one after the other ("per <2e>:<e>", the lower half of
 ; the destination from the first source, the upper half from the second).
+; The pairwise long forms (uaddlp) keep the elements in place, each one twice
+; as wide ("per <2e>"), and the accumulating ones (uadalp) also read the old
+; destination.
 ; Reductions, and the scalar pairwise forms: the union of every byte read into
 ; every byte written, then the bytes above the scalar cleared.
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
@@ -56,6 +59,25 @@
 ; CHECK-NEXT:  .ascii "X0 <- V0[0:3]\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
+; uaddlp v0.8h, v0.16b
+; CHECK-LABEL: HBNG_uaddlp_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:15] per 2\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
+; saddlp v0.2s, v0.4h
+; CHECK-LABEL: HBNG_saddlp_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] per 4\n"
+; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
+; uadalp v0.2d, v1.4s
+; CHECK-LABEL: HBNG_uadalp_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:15] | V1[0:15] per 8\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
 
 define <4 x i32> @addp(<4 x i32> %a, <4 x i32> %b) {
 entry:
@@ -94,6 +116,25 @@ entry:
   ret i16 %0
 }
 
+define <8 x i16> @uaddlp(<16 x i8> %a) {
+entry:
+  %r = tail call <8 x i16> @llvm.aarch64.neon.uaddlp.v8i16.v16i8(<16 x i8> %a)
+  ret <8 x i16> %r
+}
+
+define <2 x i32> @saddlp(<4 x i16> %a) {
+entry:
+  %r = tail call <2 x i32> @llvm.aarch64.neon.saddlp.v2i32.v4i16(<4 x i16> %a)
+  ret <2 x i32> %r
+}
+
+define <2 x i64> @uadalp(<2 x i64> %acc, <4 x i32> %a) {
+entry:
+  %p = tail call <2 x i64> @llvm.aarch64.neon.uaddlp.v2i64.v4i32(<4 x i32> %a)
+  %r = add <2 x i64> %acc, %p
+  ret <2 x i64> %r
+}
+
 declare <4 x i32> @llvm.aarch64.neon.addp.v4i32(<4 x i32>, <4 x i32>)
 
 declare <8 x i8> @llvm.aarch64.neon.umaxp.v8i8(<8 x i8>, <8 x i8>)
@@ -105,3 +146,9 @@ declare i32 @llvm.vector.reduce.add.v4i32(<4 x i32>)
 declare i8 @llvm.vector.reduce.umax.v8i8(<8 x i8>)
 
 declare i32 @llvm.aarch64.neon.uaddlv.i32.v16i8(<16 x i8>)
+
+declare <8 x i16> @llvm.aarch64.neon.uaddlp.v8i16.v16i8(<16 x i8>)
+
+declare <2 x i32> @llvm.aarch64.neon.saddlp.v2i32.v4i16(<4 x i16>)
+
+declare <2 x i64> @llvm.aarch64.neon.uaddlp.v2i64.v4i32(<4 x i32>)

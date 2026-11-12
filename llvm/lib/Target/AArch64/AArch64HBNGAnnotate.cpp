@@ -410,6 +410,7 @@ enum NeonFamily {
   NF_Log,    // exact bytes
   NF_Cmp,    // comparison: clean
   NF_Pair,   // pairwise
+  NF_PairL,  // pairwise long, in place
   NF_Red,    // reduction across lanes
   NF_Wide,   // widening, source arrangement in the name
   NF_Narrow, // narrowing, destination arrangement in the name
@@ -491,6 +492,8 @@ static NeonFamily getNeonFamily(StringRef Mn) {
   if (Is({"ADDP", "FADDP", "SMAXP", "SMINP", "UMAXP", "UMINP", "FMAXP",
           "FMINP", "FMAXNMP", "FMINNMP"}))
     return NF_Pair;
+  if (Is({"UADDLP", "SADDLP", "UADALP", "SADALP"}))
+    return NF_PairL;
   if (Is({"ADDV", "SMAXV", "SMINV", "UMAXV", "UMINV", "SADDLV", "UADDLV",
           "FMAXV", "FMINV", "FMAXNMV", "FMINNMV"}))
     return NF_Red;
@@ -680,6 +683,16 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     if (DB < 16)
       Lines.push_back(vecRange(Rd, DB, 16 - DB) + " <- 0\n");
     return Lines;
+  }
+  case NF_PairL: {
+    // Output element i, twice as wide, from input elements 2i and 2i+1 of the
+    // source ("per <2e>"); the accumulating forms (uadalp) also read the old
+    // destination.
+    bool Accumulates = NN->Mn == "UADALP" || NN->Mn == "SADALP";
+    SmallVector<Register, 4> Rs = Srcs(1);
+    if (Tied != Accumulates || !DB || DB != NN->N * E || !AllOf(Rs, DB))
+      return Unsupported;
+    return writeReg(Rd, Union(Rs) + per(2 * E, 2 * E));
   }
   case NF_Red:
     return writeReg(Rd, Union(Srcs(1)));
