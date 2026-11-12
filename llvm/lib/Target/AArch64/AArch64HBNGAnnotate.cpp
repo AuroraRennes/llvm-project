@@ -1501,6 +1501,17 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
       Annotations = writeReg(MI.getOperand(0).getReg(),
                              vecWhole(MI.getOperand(1).getReg()) + " per 1");
       break;
+    // A named register read (llvm.read_register, __getReg): mov Xt, Xn or
+    // fmov Dt, Dn, the source register held in an immediate operand.
+    case AArch64::READ_REGISTER_GPR64:
+      Annotations =
+          writeReg(MI.getOperand(0).getReg(),
+                   gprLoc(MI.getOperand(1).getImm()).value_or("0"));
+      break;
+    case AArch64::READ_REGISTER_FPR64:
+      Annotations = writeReg(MI.getOperand(0).getReg(),
+                             vecWhole(MI.getOperand(1).getImm()) + " per 1");
+      break;
     case AArch64::FMOVDXr: case AArch64::FMOVXDr:
     case AArch64::FMOVSWr: case AArch64::FMOVWSr:
     case AArch64::FMOVHWr: case AArch64::FMOVHXr:
