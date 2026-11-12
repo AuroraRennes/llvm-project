@@ -139,6 +139,12 @@
 ; CHECK-NEXT:  .ascii "V0[0:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
+; movi d0, #0000000000000000
+; CHECK-LABEL: HBNG_zero_h_annot:
+; CHECK-NEXT:  .ascii "@0\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- 0\n"
+; CHECK-NEXT:  .ascii "@4\n"
+; CHECK-NEXT:  .ascii "END\n"
 
 define <4 x i32> @insgpr(<4 x i32> %v, i32 %x) {
 entry:
@@ -261,4 +267,9 @@ entry:
 define <4 x float> @fmovv() {
 entry:
   ret <4 x float> splat (float 1.000000e+00)
+}
+
+define half @zero_h() {
+entry:
+  ret half 0.0
 }

@@ -1462,7 +1462,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
       Annotations = genDataflow(MI);
       break;
     // Zero
-    case AArch64::FMOVS0: case AArch64::FMOVD0:
+    case AArch64::FMOVS0: case AArch64::FMOVD0: case AArch64::FMOVH0:
       Annotations = genClear(MI);
       break;
     // Register move: between FP/SIMD registers byte for byte ("per 1"), the
