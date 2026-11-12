@@ -88,7 +88,6 @@
 ; ANNOT-NEXT:  .ascii "@4\n"
 ; ANNOT-NEXT:  .ascii "X8 <- M[<X1> .. +8]\n"
 ; ANNOT-NEXT:  .ascii "@8\n"
-; ANNOT-NEXT:  .ascii "X2 <- X2\n"
 ; ANNOT-NEXT:  .ascii "@12\n"
 ; ANNOT-NEXT:  .ascii "send X0\n"
 ; ANNOT-NEXT:  .ascii "@16\n"

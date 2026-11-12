@@ -47,7 +47,6 @@ define ptr @tp() {
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "X8 <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "X8 <- X8\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "END\n"

@@ -1,7 +1,7 @@
 ; Pointer authentication in the hint space (a NOP on the Cortex-A53): the
 ; pointer from the pointer and the modifier (paciasp, autibsp: LR from LR and
-; SP; xpaclri: LR from LR; autia1716: X17 from X17 and X16), and nothing for
-; pacm and the b-key CFI pseudo (no instruction, no group).
+; SP; autia1716: X17 from X17 and X16), and nothing for xpaclri (LR keeps its
+; tag), pacm and the b-key CFI pseudo (no instruction, no group).
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; hint #25 ; str x30, [sp, #-16]! ; bl g
@@ -50,7 +50,6 @@
 ; CHECK-NEXT:  .ascii "M[<SP> - 16 .. +8] <- LR\n"
 ; CHECK-NEXT:  .ascii "<SP> <- <SP> - 16\n"
 ; CHECK-NEXT:  .ascii "@8\n"
-; CHECK-NEXT:  .ascii "LR <- LR\n"
 ; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "X0 <- LR\n"
 ; CHECK-NEXT:  .ascii "@16\n"
@@ -93,7 +92,6 @@
 ; CHECK-NEXT:  .ascii "@56\n"
 ; CHECK-NEXT:  .ascii "X15 <- 0\n"
 ; CHECK-NEXT:  .ascii "@60\n"
-; CHECK-NEXT:  .ascii "X15 <- X15\n"
 ; CHECK-NEXT:  .ascii "@64\n"
 ; CHECK-NEXT:  .ascii "@68\n"
 ; CHECK-NEXT:  .ascii "X17 <- X17 | X16\n"

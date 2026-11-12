@@ -1,7 +1,8 @@
 ; Bitwise NEON operations move exact bytes: byte k of the destination from
-; byte k of each source ("per 1"). The immediate forms of orr/bic read their
-; destination. Comparisons give clean results, the operands compared listed
-; under "excl" (no tag on a comparison result, as for the condition flags).
+; byte k of each source ("per 1"). The immediate forms of orr/bic keep the
+; destination's bytes: no line, but the clear above a 64-bit form.
+; Comparisons give clean results, the operands compared listed under "excl"
+; (no tag on a comparison result, as for the condition flags).
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 
 ; and v0.16b, v1.16b, v0.16b
@@ -26,20 +27,17 @@
 ; mvn v0.8b, v0.8b
 ; CHECK-LABEL: HBNG_not8_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] per 1\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; bic v0.4s, #255, lsl #8
 ; CHECK-LABEL: HBNG_bicimm_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:15] per 1\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; orr v0.4h, #3
 ; CHECK-LABEL: HBNG_orrimm_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] per 1\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"

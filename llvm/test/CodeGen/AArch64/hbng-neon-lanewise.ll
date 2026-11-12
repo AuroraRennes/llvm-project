@@ -76,7 +76,6 @@
 ; shl v0.8b, v0.8b, #2
 ; CHECK-LABEL: HBNG_shl8b_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] per 1\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
@@ -107,7 +106,6 @@
 ; cnt v0.16b, v0.16b
 ; CHECK-LABEL: HBNG_cnt_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:15] per 1\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fcvtzs v0.4s, v0.4s

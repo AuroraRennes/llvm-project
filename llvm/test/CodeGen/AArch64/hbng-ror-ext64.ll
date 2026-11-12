@@ -31,14 +31,12 @@
 ; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "X8 <- SP\n"
 ; CHECK-NEXT:  .ascii "@16\n"
-; CHECK-NEXT:  .ascii "X9 <- X9\n"
 ; CHECK-NEXT:  .ascii "@20\n"
 ; CHECK-NEXT:  .ascii "X0 <- X8 | X9\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; sub sp, sp, #1, lsl #12 ; cmp sp, x0 ; b.le .LBB2_3
 ; CHECK-LABEL: HBNG_dyn_alloca_n_1_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "SP <- SP\n"
 ; CHECK-NEXT:  .ascii "<SP> <- <SP> - 4096\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "@8\n"

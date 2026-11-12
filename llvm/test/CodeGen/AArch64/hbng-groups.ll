@@ -1,7 +1,8 @@
 ; Every instruction of a block has its group, "@<offset>" and then its lines,
 ; empty groups included, and every block is closed by END, including one that
 ; falls through into the next. A pseudo expanded at emission has one group per
-; instruction it becomes.
+; instruction it becomes. A line that leaves every tag as it was (X9 <- X9 for
+; an and with an immediate, V0[0:15] <- V0[0:15] per 1) is left out.
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 -aarch64-min-jump-table-entries=4 < %s | FileCheck %s
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 -aarch64-min-jump-table-entries=4 < %s | FileCheck %s --check-prefix=ASM
 
@@ -42,7 +43,6 @@ zero:
 ; ASM-NEXT:    br x10
 ; CHECK-LABEL: HBNG_table_n_1_annot:
 ; CHECK:       .ascii "@12\n"
-; CHECK-NEXT:  .ascii "X9 <- X9\n"
 ; CHECK-NEXT:  .ascii "@16\n"
 ; CHECK-NEXT:  .ascii "X10 <- 0\n"
 ; CHECK-NEXT:  .ascii "@20\n"

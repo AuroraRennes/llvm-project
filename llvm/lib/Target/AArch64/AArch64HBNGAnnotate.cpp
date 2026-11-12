@@ -257,6 +257,34 @@ std::vector<std::string> AArch64HBNGAnnotate::genDataflow(MachineInstr &MI) {
   return writeReg(MI.getOperand(0).getReg(), unionOf(Srcs));
 }
 
+// A line whose locations each get only their own tag changes nothing: one
+// tag per general register (X9 <- X9, LR <- LR), byte for byte in a V
+// register (V0[0:15] <- V0[0:15] per 1, V0[5] <- V0[5]). Not a V range
+// without "per 1" (every byte from every byte), nor excl, over or a value.
+static bool keepsItsTags(StringRef Line) {
+  auto [Dst, Src] = Line.split(" <- ");
+  if (Src.empty() || Dst.starts_with("<"))
+    return false;
+  bool VRange = Dst.starts_with("V") && Dst.contains(':');
+  if (Src == Dst)
+    return !VRange;
+  return Dst.starts_with("V") && Src.consume_front(Dst) && Src == " per 1";
+}
+
+// Appends the lines of Text ("...\n" each) that change a tag.
+static void appendChangingLines(std::vector<std::string> &Out,
+                                StringRef Text) {
+  std::string Kept;
+  while (!Text.empty()) {
+    auto [Line, Rest] = Text.split('\n');
+    if (!keepsItsTags(Line))
+      Kept += (Line + "\n").str();
+    Text = Rest;
+  }
+  if (!Kept.empty())
+    Out.push_back(Kept);
+}
+
 // An instruction whose result does not depend on its source, read twice:
 // x - x and x ^ x are 0, x & ~x is 0, x | ~x and x ^ ~x are all ones, and
 // x - x - !C is 0 or -1 (the flags carry no tag). Only when the second read
@@ -1685,8 +1713,8 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
         for (std::vector<std::string> &Group : generateGroups(MI)) {
           BBAnnotationInfo.Annotations.push_back("@" + std::to_string(Offset) +
                                                  "\n");
-          BBAnnotationInfo.Annotations.insert(
-              BBAnnotationInfo.Annotations.end(), Group.begin(), Group.end());
+          for (const std::string &Lines : Group)
+            appendChangingLines(BBAnnotationInfo.Annotations, Lines);
           Offset += 4;
         }
 
