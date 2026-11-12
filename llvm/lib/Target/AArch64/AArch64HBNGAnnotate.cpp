@@ -436,6 +436,17 @@ static std::optional<NeonName> parseNeonName(StringRef Name) {
     R.E = Name[I] == 'b' ? 1 : Name[I] == 'h' ? 2 : Name[I] == 's' ? 4 : 8;
     return R;
   }
+  // The scalar widening multiplies name their sources' size: "SQDMULLi32" is
+  // sqdmull d0, s1, s2, taken as one element of 8 bytes.
+  unsigned SrcBits = 0;
+  if (Name.take_front(I).starts_with("SQDM") && I < Name.size() &&
+      Name[I] == 'i' && !Name.drop_front(I + 1).getAsInteger(10, SrcBits) &&
+      (SrcBits == 16 || SrcBits == 32)) {
+    R.Mn = Name.take_front(I);
+    R.N = 1;
+    R.E = 2 * SrcBits / 8;
+    return R;
+  }
   if (I == 0 || I + 1 >= Name.size() || Name[I] != 'v')
     return std::nullopt;
   R.Mn = Name.take_front(I);
@@ -708,13 +719,9 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     return writeReg(Rd, Union(Srcs(1)));
   case NF_Wide: {
     // The source arrangement is in the name; the "2" forms read the upper
-    // half of their (128-bit) sources.
-    unsigned SB = NN->N * E;
-    if (Indexed || (SB != 8 && SB != 16) || DB != 16)
-      return Unsupported;
-    // The wide forms (uaddw: the first source as wide as the result) and the
-    // accumulating ones (umlal: the old destination), lane by lane, with the
-    // other sources widened; one line per lane.
+    // half of their (128-bit) sources. A scalar form (one element of the
+    // destination's size) reads elements half as wide: sqdmull d0, s1, s2 or
+    // d0, s1, v2.s[1]; pmull v0.1q, v1.1d, v2.1d is not one.
     bool WideFirst = is_contained({"UADDW", "SADDW", "USUBW", "SSUBW"}, NN->Mn);
     bool Accumulates =
         is_contained({"UMLAL", "SMLAL", "UMLSL", "SMLSL", "SQDMLAL", "SQDMLSL",
@@ -722,17 +729,48 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
                      NN->Mn);
     if (Tied != Accumulates)
       return Unsupported;
+    // Rs[0] is the wide source (uaddw) or the old destination (umlal, tied);
+    // the by-element register of an indexed form is not in Rs.
     SmallVector<Register, 4> Rs = Srcs(1);
-    if (WideFirst || Accumulates) {
-      // Rs[0] is the wide source, or the old destination (tied).
-      ArrayRef<Register> Narrow = ArrayRef<Register>(Rs).drop_front();
-      if (Narrow.empty() || !AllOf(Rs[0], 16) || !AllOf(Narrow, SB))
+    bool WideRs0 = WideFirst || Accumulates;
+    ArrayRef<Register> Narrow = ArrayRef<Register>(Rs).drop_front(WideRs0);
+    bool Scalar = NN->N == 1 && DB == E;
+    unsigned SE = Scalar ? E / 2 : E; // a source element's size
+    // The element an indexed form reads in every lane.
+    std::string Elem;
+    if (Indexed)
+      Elem = vecRange(MI.getOperand(NumOps - 2).getReg(),
+                      MI.getOperand(NumOps - 1).getImm() * SE, SE);
+    if (Scalar) {
+      if (!SE || Narrow.empty() || !AllOf(Narrow, SE) ||
+          (WideRs0 && !AllOf(Rs[0], E)))
+        return Unsupported;
+      SmallVector<std::string, 4> L;
+      if (WideRs0)
+        L.push_back(vecWhole(Rs[0]));
+      for (Register R : Narrow)
+        L.push_back(vecWhole(R));
+      if (Indexed)
+        L.push_back(Elem);
+      return writeReg(Rd, unionOf(L));
+    }
+    unsigned SB = NN->N * E;
+    if ((SB != 8 && SB != 16) || DB != 16)
+      return Unsupported;
+    // The wide, accumulating and by-element forms, lane by lane, with the
+    // narrow sources widened; one line per lane.
+    if (WideRs0 || Indexed) {
+      if (Narrow.empty() || !AllOf(Narrow, SB) || (WideRs0 && !AllOf(Rs[0], 16)))
         return Unsupported;
       std::vector<std::string> Lines;
       for (unsigned Lo = 0; Lo < 16; Lo += 2 * E) {
-        SmallVector<std::string, 3> L = {vecRange(Rs[0], Lo, 2 * E)};
+        SmallVector<std::string, 4> L;
+        if (WideRs0)
+          L.push_back(vecRange(Rs[0], Lo, 2 * E));
         for (Register R : Narrow)
           L.push_back(vecRange(R, SB - 8 + Lo / 2, E));
+        if (Indexed)
+          L.push_back(Elem);
         Lines.push_back(vecRange(Rd, Lo, 2 * E) + " <- " + unionOf(L) + "\n");
       }
       return Lines;
