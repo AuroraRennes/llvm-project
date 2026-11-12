@@ -1314,20 +1314,24 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     // Two registers
     case AArch64::ADDXrr: case AArch64::ADDXrx: case AArch64::ADDXrs:
     case AArch64::ADDWrr: case AArch64::ADDWrx: case AArch64::ADDWrs:
+    case AArch64::ADDXrx64:
     case AArch64::FADDSrr: case AArch64::FADDDrr:
       Annotations = genDataflow(MI);
       break;
     case AArch64::SUBXrr: case AArch64::SUBXrx: case AArch64::SUBXrs:
     case AArch64::SUBWrr: case AArch64::SUBWrx: case AArch64::SUBWrs:
+    case AArch64::SUBXrx64:
     case AArch64::FSUBDrr: case AArch64::FSUBSrr:
       Annotations = genDataflow(MI);
       break;
     case AArch64::ADDSXrr: case AArch64::ADDSXrx: case AArch64::ADDSXrs:
     case AArch64::ADDSWrr: case AArch64::ADDSWrx: case AArch64::ADDSWrs:
+    case AArch64::ADDSXrx64:
       Annotations = genDataflow(MI);
       break;
     case AArch64::SUBSXrr: case AArch64::SUBSXrx: case AArch64::SUBSXrs:
     case AArch64::SUBSWrr: case AArch64::SUBSWrx: case AArch64::SUBSWrs:
+    case AArch64::SUBSXrx64:
       Annotations = genDataflow(MI);
       break;
     case AArch64::ADCSXr: case AArch64::ADCSWr:
@@ -1439,6 +1443,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::ASRVWr: case AArch64::ASRVXr:
     case AArch64::LSRVWr: case AArch64::LSRVXr:
     case AArch64::LSLVWr: case AArch64::LSLVXr:
+    case AArch64::RORVWr: case AArch64::RORVXr:
       Annotations = genDataflow(MI);
       break;
     //=== MOVES ===//
