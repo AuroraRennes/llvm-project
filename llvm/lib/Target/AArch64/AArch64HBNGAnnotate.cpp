@@ -1566,8 +1566,11 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
 
     // A system register carries no tag (like the flags): its value is not
     // data the program read or received (thread pointer, FPCR/FPSR, counters).
-    case AArch64::MRS:
+    case AArch64::MRS: case AArch64::MRS_FPCR:
       Annotations = genClear(MI);
+      break;
+    // Writing one drops the tag (NZCV saved and restored around a call too).
+    case AArch64::MSR: case AArch64::MSR_FPCR:
       break;
     // Barriers, hints and prefetches move no data.
     case AArch64::PRFMui: case AArch64::PRFMl: case AArch64::PRFMroW:
