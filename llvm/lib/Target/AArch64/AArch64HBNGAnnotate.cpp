@@ -529,6 +529,8 @@ static NeonFamily getNeonFamily(StringRef Mn) {
     return NF_Narrow;
   if (Is({"FCVTN", "FCVTXN"}))
     return NF_Narrow;
+  if (Is({"ADDHN", "RADDHN", "SUBHN", "RSUBHN"}))
+    return NF_Narrow;
   if (Is({"ZIP1", "ZIP2", "UZP1", "UZP2", "TRN1", "TRN2", "EXT", "REV16",
           "REV32", "REV64", "DUP"}))
     return NF_Perm;
@@ -761,16 +763,26 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     return writeReg(Rd, unionOf(L) + per(E, 2 * E));
   }
   case NF_Narrow: {
-    // The destination arrangement is in the name; the "2" forms write the
-    // upper half of the destination and keep the lower one.
-    unsigned Out = NN->N * E;
+    // The destination arrangement is in the name, after the sources' for the
+    // high-half forms (ADDHNv4i32_v4i16: addhn v0.4h, v1.4s, v2.4s); the "2"
+    // forms write the upper half of the destination and keep the lower one.
+    unsigned N = NN->N, El = E;
+    if (NN->Rest.starts_with("_v")) {
+      std::string D = ("X" + NN->Rest.drop_front()).str();
+      std::optional<NeonName> DN = parseNeonName(D);
+      if (!DN || !DN->Rest.empty())
+        return Unsupported;
+      N = DN->N;
+      El = DN->E;
+    }
+    unsigned Out = N * El;
     bool Upper = Out == 16;
-    if (!NN->N || Upper != Tied || !DB)
+    if (!N || Upper != Tied || !DB)
       return Unsupported;
     SmallVector<Register, 4> Rs = Srcs(Tied ? 2 : 1);
     if (!AllOf(Rs, Upper ? 16 : 2 * Out))
       return Unsupported;
-    std::string Rhs = Union(Rs) + per(2 * E, E);
+    std::string Rhs = Union(Rs) + per(2 * El, El);
     if (Upper)
       return std::vector<std::string>{vecRange(Rd, 8, 8) + " <- " + Rhs + "\n"};
     if (DB != Out)
