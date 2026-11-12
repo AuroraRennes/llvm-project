@@ -427,9 +427,17 @@ static std::optional<NeonName> parseNeonName(StringRef Name) {
   size_t I = 0;
   while (I < Name.size() && (isUpper(Name[I]) || isDigit(Name[I])))
     ++I;
+  NeonName R;
+  // A scalar form with an immediate, its (destination) size as a suffix:
+  // "SHLd" is SHL on one element of 8 bytes, "SQSHRNs" narrows into 4 bytes.
+  if (I > 0 && I + 1 == Name.size() && StringRef("bhsd").contains(Name[I])) {
+    R.Mn = Name.take_front(I);
+    R.N = 1;
+    R.E = Name[I] == 'b' ? 1 : Name[I] == 'h' ? 2 : Name[I] == 's' ? 4 : 8;
+    return R;
+  }
   if (I == 0 || I + 1 >= Name.size() || Name[I] != 'v')
     return std::nullopt;
-  NeonName R;
   R.Mn = Name.take_front(I);
   StringRef S = Name.drop_front(I + 1);
   unsigned N = 0;
