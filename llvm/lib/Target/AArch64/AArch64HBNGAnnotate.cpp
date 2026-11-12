@@ -436,6 +436,15 @@ static std::optional<NeonName> parseNeonName(StringRef Name) {
     R.E = Name[I] == 'b' ? 1 : Name[I] == 'h' ? 2 : Name[I] == 's' ? 4 : 8;
     return R;
   }
+  // The scalar FP forms of three registers end with their size in bits:
+  // "FMULX64" is FMULX on one element of 8 bytes.
+  if (I == Name.size() && I > 2 && isUpper(Name[I - 3]) &&
+      (Name.ends_with("16") || Name.ends_with("32") || Name.ends_with("64"))) {
+    R.Mn = Name.drop_back(2);
+    R.N = 1;
+    R.E = Name.ends_with("16") ? 2 : Name.ends_with("32") ? 4 : 8;
+    return R;
+  }
   // The scalar widening multiplies name their sources' size: "SQDMULLi32" is
   // sqdmull d0, s1, s2, taken as one element of 8 bytes.
   unsigned SrcBits = 0;
@@ -491,8 +500,9 @@ static NeonFamily getNeonFamily(StringRef Mn) {
           "FMLA", "FMLS", "FDIV", "SABD", "UABD", "FABD", "SABA", "UABA",
           "SMAX", "SMIN", "UMAX", "UMIN", "FMAX", "FMIN", "FMAXNM", "FMINNM",
           "NEG", "ABS", "SQABS", "SQNEG", "FNEG", "FABS", "FSQRT", "FRECPE",
-          "FRSQRTE", "URECPE", "URSQRTE", "FRECPS", "FRSQRTS", "FRINTA",
-          "FRINTI", "FRINTM", "FRINTN", "FRINTP", "FRINTX", "FRINTZ"}))
+          "FRSQRTE", "URECPE", "URSQRTE", "FRECPS", "FRSQRTS", "FRECPX",
+          "FRINTA", "FRINTI", "FRINTM", "FRINTN", "FRINTP", "FRINTX",
+          "FRINTZ"}))
     return NF_Lane;
   if (Is({"SHL", "USHR", "SSHR", "URSHR", "SRSHR", "USRA", "SSRA", "URSRA",
           "SRSRA", "SLI", "SRI", "USHL", "SSHL", "URSHL", "SRSHL", "UQSHL",
@@ -805,6 +815,9 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     // high-half forms (ADDHNv4i32_v4i16: addhn v0.4h, v1.4s, v2.4s); the "2"
     // forms write the upper half of the destination and keep the lower one.
     unsigned N = NN->N, El = E;
+    // The scalar fcvtxn names its source: FCVTXNv1i64 is fcvtxn s0, d1.
+    if (NN->Mn == "FCVTXN" && N == 1)
+      El = E / 2;
     if (NN->Rest.starts_with("_v")) {
       std::string D = ("X" + NN->Rest.drop_front()).str();
       std::optional<NeonName> DN = parseNeonName(D);
