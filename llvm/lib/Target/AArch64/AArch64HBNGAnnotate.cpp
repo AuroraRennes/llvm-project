@@ -1584,6 +1584,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::JumpTableDest8:
     case AArch64::KILL:
     case AArch64::HBNG_ATOM_LABEL:
+    case AArch64::BRK: case AArch64::HLT:  // Traps
       break;
     default:
       Annotations.push_back(Unsupported + "\n");
