@@ -507,7 +507,7 @@ static NeonFamily getNeonFamily(StringRef Mn) {
     return NF_Red;
   if (Is({"USHLL", "SSHLL", "SHLL"}))
     return NF_Wide;
-  if (Is({"UMULL", "SMULL", "UABDL", "SABDL", "SQDMULL"}))
+  if (Is({"UMULL", "SMULL", "PMULL", "UABDL", "SABDL", "SQDMULL"}))
     return NF_Wide;
   if (Is({"UADDL", "SADDL"}))
     return NF_Wide;
