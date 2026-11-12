@@ -559,7 +559,7 @@ static NeonFamily getNeonFamily(StringRef Mn) {
   if (Is({"ZIP1", "ZIP2", "UZP1", "UZP2", "TRN1", "TRN2", "EXT", "REV16",
           "REV32", "REV64", "DUP"}))
     return NF_Perm;
-  if (Is({"TBL"}))
+  if (Is({"TBL", "TBX"}))
     return NF_Tbl;
   if (Is({"BSL", "BIT", "BIF"}))
     return NF_Sel;
@@ -863,9 +863,12 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     return writeReg(Rd, byteMap(Rs, *Map));
   }
   case NF_Tbl: {
-    // (Vd, table list, Vm). TBX, which keeps the old byte for an index out
-    // of range, is not described (not in the families).
-    Register List = MI.getOperand(1).getReg();
+    // (Vd, table list, Vm), or (Vd, Vd, table list, Vm) for TBX, which keeps
+    // the old byte for an index out of range.
+    bool Tbx = NN->Mn == "TBX";
+    if (Tbx != Tied)
+      return Unsupported;
+    Register List = MI.getOperand(Tbx ? 2 : 1).getReg();
     SmallVector<Register, 4> Table;
     if (AArch64::FPR128RegClass.contains(List)) {
       Table.push_back(List);
@@ -876,10 +879,20 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
         if (Register R = TRI->getSubReg(List, Sub))
           Table.push_back(R);
     }
-    Register Idx = MI.getOperand(2).getReg();
+    Register Idx = MI.getOperand(Tbx ? 3 : 2).getReg();
     if (!DB || !AllOf(Idx, DB))
       return Unsupported;
-    return writeReg(Rd, Union(Table) + " excl " + vecWhole(Idx) + per(1, 1));
+    if (!Tbx)
+      return writeReg(Rd, Union(Table) + " excl " + vecWhole(Idx) + per(1, 1));
+    // Byte k also from the old byte k: one line per byte.
+    std::vector<std::string> Lines;
+    for (unsigned K = 0; K < DB; ++K)
+      Lines.push_back(vecRange(Rd, K, 1) + " <- " +
+                      unionOf({vecRange(Rd, K, 1), Union(Table)}) + " excl " +
+                      vecRange(Idx, K, 1) + "\n");
+    if (DB < 16)
+      Lines.push_back(vecRange(Rd, DB, 16 - DB) + " <- 0\n");
+    return Lines;
   }
   case NF_Sel: {
     // (Vd, Vd tied, Vn, Vm). BSL: Vd is the mask, Vn and Vm the data.
