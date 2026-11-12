@@ -1261,6 +1261,12 @@ AArch64HBNGAnnotate::generateGroups(MachineInstr &MI) {
   case AArch64::EMITBKEY:
   case AArch64::INIT_UNDEF:
     return {};
+  // The barrier after a ret or br of -mharden-sls (never executed): dsb sy and
+  // isb, or sb, writing nothing.
+  case AArch64::SpeculationBarrierISBDSBEndBB:
+    return {{}, {}};
+  case AArch64::SpeculationBarrierSBEndBB:
+    return {{}};
   default:
     break;
   }
