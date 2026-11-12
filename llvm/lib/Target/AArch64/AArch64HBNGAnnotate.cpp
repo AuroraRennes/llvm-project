@@ -494,6 +494,10 @@ static NeonFamily getNeonFamily(StringRef Mn) {
   if (Is({"ADD", "FADD", "SQADD", "UQADD", "SHADD", "UHADD", "SRHADD",
           "URHADD"}))
     return NF_Lane;
+  // The old destination is a source (tied): sqadd of a source of the other
+  // signedness into it.
+  if (Is({"SUQADD", "USQADD"}))
+    return NF_Lane;
   if (Is({"SUB", "FSUB", "SQSUB", "UQSUB", "SHSUB", "UHSUB"}))
     return NF_Lane;
   if (Is({"MUL", "MLA", "MLS", "PMUL", "SQDMULH", "SQRDMULH", "FMUL", "FMULX",
