@@ -1497,6 +1497,17 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::CRC32CWrr: case AArch64::CRC32CXrr:
       Annotations = genDataflow(MI);
       break;
+    // AES and SHA (+aes, +sha2): every byte written from every byte read,
+    // the old destination included when it is a source (aese, sha256h).
+    case AArch64::AESErr: case AArch64::AESDrr:
+    case AArch64::AESMCrr: case AArch64::AESIMCrr:
+    case AArch64::SHA1Hrr: case AArch64::SHA1Crrr:
+    case AArch64::SHA1Prrr: case AArch64::SHA1Mrrr:
+    case AArch64::SHA1SU0rrr: case AArch64::SHA1SU1rr:
+    case AArch64::SHA256Hrrr: case AArch64::SHA256H2rrr:
+    case AArch64::SHA256SU0rr: case AArch64::SHA256SU1rrr:
+      Annotations = genDataflow(MI);
+      break;
     //=== BITMANIP ===//
     case AArch64::SBFMXri: case AArch64::SBFMWri:
     case AArch64::UBFMXri: case AArch64::UBFMWri:
