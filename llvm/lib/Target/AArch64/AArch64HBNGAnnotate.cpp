@@ -1228,6 +1228,9 @@ AArch64HBNGAnnotate::generateGroups(MachineInstr &MI) {
     return {writeReg(Dst, "0"), writeReg(Scratch, "0"),
             writeReg(Dst, unionOf({*gprLoc(Dst), *gprLoc(Scratch)}))};
   }
+  // .cfi_b_key_frame, no instruction (its size is the default of 4).
+  case AArch64::EMITBKEY:
+    return {};
   default:
     break;
   }
@@ -1584,7 +1587,24 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::JumpTableDest8:
     case AArch64::KILL:
     case AArch64::HBNG_ATOM_LABEL:
+    case AArch64::PACM:            // Modifier for the next PAC (hint space)
     case AArch64::BRK: case AArch64::HLT:  // Traps
+      break;
+    // Pointer authentication, in the hint space (a NOP without PAC, as on the
+    // Cortex-A53): the pointer signed, authenticated or stripped, from the
+    // pointer and the modifier (SP, X16 or none).
+    case AArch64::PACIASP: case AArch64::PACIBSP:
+    case AArch64::AUTIASP: case AArch64::AUTIBSP:
+      Annotations = {"LR <- LR | SP\n"};
+      break;
+    case AArch64::PACIAZ: case AArch64::PACIBZ:
+    case AArch64::AUTIAZ: case AArch64::AUTIBZ:
+    case AArch64::XPACLRI:
+      Annotations = {"LR <- LR\n"};
+      break;
+    case AArch64::PACIA1716: case AArch64::PACIB1716:
+    case AArch64::AUTIA1716: case AArch64::AUTIB1716:
+      Annotations = {"X17 <- X17 | X16\n"};
       break;
     default:
       Annotations.push_back(Unsupported + "\n");
