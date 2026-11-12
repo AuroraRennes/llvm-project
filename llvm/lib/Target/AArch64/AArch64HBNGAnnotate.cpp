@@ -1228,8 +1228,10 @@ AArch64HBNGAnnotate::generateGroups(MachineInstr &MI) {
     return {writeReg(Dst, "0"), writeReg(Scratch, "0"),
             writeReg(Dst, unionOf({*gprLoc(Dst), *gprLoc(Scratch)}))};
   }
-  // .cfi_b_key_frame, no instruction (its size is the default of 4).
+  // No instruction (their size is the default of 4): .cfi_b_key_frame, and
+  // a register left undefined.
   case AArch64::EMITBKEY:
+  case AArch64::INIT_UNDEF:
     return {};
   default:
     break;
