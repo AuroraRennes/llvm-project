@@ -64,6 +64,24 @@ define i64 @fetch_add(ptr %p, i64 %v) {
   ret i64 %r
 }
 
+; The epilogue's reload of FP is sent after it (a fallback, through a free
+; register: x9-x17 are dead at a return).
+; CHECK-LABEL: frame:
+; CHECK:       ldp x29, x30, [sp, #16]
+; CHECK-NEXT:  adrp [[S:x[0-9]+]], __hbng_chan
+; CHECK-NEXT:  str x29, {{\[}}[[S]]{{\]}}
+; CHECK-NEXT:  add sp, sp, #32
+; CHECK-NEXT:  ret
+; ANNOT-LABEL: HBNG_frame_annot:
+; ANNOT:       .ascii "send X29\n"
+; ANNOT-NEXT:  .ascii "<FP> <- <X29>\n"
+declare void @g(ptr)
+define void @frame() "frame-pointer"="all" {
+  %a = alloca i64
+  call void @g(ptr %a)
+  ret void
+}
+
 ; SP written from a register (a variable-size alloca): its source is sent
 ; before the write, by a fallback (the write only exists after register
 ; allocation).
@@ -77,7 +95,6 @@ define i64 @fetch_add(ptr %p, i64 %v) {
 ; ANNOT-NEXT:  .ascii "@{{[0-9]+}}\n"
 ; ANNOT-NEXT:  .ascii "SP <- X0\n"
 ; ANNOT-NEXT:  .ascii "<SP> <- <X0>\n"
-declare void @g(ptr)
 define void @vla(i64 %n) "frame-pointer"="all" {
   %a = alloca i8, i64 %n
   call void @g(ptr %a)

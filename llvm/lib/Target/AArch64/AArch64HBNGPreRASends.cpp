@@ -24,12 +24,12 @@
 //
 // - AArch64HBNGCheckSends, after register allocation, the post-RA load/store
 //   optimizer, scheduling and the prologue and epilogue: for every access
-//   (and write of SP) the annotations describe, each register its annotation
-//   refers to must pair with a send: the nearest preceding send of that
-//   physical register in the same block, not written between the send and
-//   the access (for a store-exclusive, the nearest following one). Where
-//   not, it inserts a fallback send, through a free register loaded with the
-//   page (an adrp).
+//   (and write of SP or FP) the annotations describe, each register its
+//   annotation refers to must pair with a send: the nearest preceding send of
+//   that physical register in the same block, not written between the send
+//   and the access (for a store-exclusive, the nearest following one; for a
+//   new value of FP, the send right after its write). Where not, it inserts a
+//   fallback send, through a free register loaded with the page (an adrp).
 //
 // The sends stay pseudos until emission (AArch64AsmPrinter), so the scheduler
 // and the load/store optimizer leave them in place (side effects) and the
@@ -399,12 +399,12 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
   }
 }
 
-// Every value an annotation refers to (<Xn>, an address register or a source
-// of SP) must pair with a send: the nearest preceding send of Xn in the block
-// (the annotation pass's: a machine block, also ended after a call or an svc)
-// that no instruction in between writes, else, for a store-exclusive, the
-// nearest following one. The pass checks each in program order and inserts
-// the missing sends (fallbacks).
+// Every value an annotation refers to (<Xn>, an address register, a source
+// of SP, a new value of FP) must pair with a send: the nearest preceding send
+// of Xn in the block (the annotation pass's: a machine block, also ended
+// after a call or an svc) that no instruction in between writes, else, for a
+// store-exclusive, the nearest following one. The pass checks each in
+// program order and inserts the missing sends (fallbacks).
 bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
   if (MF.getFunction().hasFnAttribute("hbng_no_instr"))
     return false;
@@ -447,6 +447,16 @@ bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
         checkBefore(MI, W->Sends);
 
       noteWrites(MI);
+
+      // FP written with a value the annotations cannot compute (a reload):
+      // the new value only exists after MI, so it is always a fallback, right
+      // after MI and the sends that pair with MI. Its group pairs <X29> with
+      // itself.
+      if (isHBNGFPSentAfter(MI, TRI)) {
+        assert(!MI.isTerminator() && "HBNG: FP written by a terminator");
+        Register FP = AArch64::FP;
+        insertFallback(MBB, afterOwnSends(MI), MI, FP);
+      }
 
       if (endsAnnotationBlock(MI))
         Avail.clear();
