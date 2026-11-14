@@ -1,7 +1,11 @@
 ; Sends decided before register allocation (-hbng-prera-sends): stores to the
-; page of __hbng_chan through any register.
+; page of __hbng_chan through any register. The pass after register
+; allocation checks that every value an annotation refers to pairs with a
+; send (nearest preceding send of the register in the block, not written in
+; between) and adds the missing ones (fallbacks).
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=-lse -hbng -hbng-prera-sends -O2 -verify-machineinstrs < %s | FileCheck %s
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=-lse -hbng -hbng-prera-sends -O2 < %s | FileCheck %s --check-prefix=ANNOT
+; RUN: llc -mtriple=aarch64-linux-musl -mattr=-lse -hbng -hbng-prera-sends -O0 < %s | FileCheck %s --check-prefix=O0
 
 ; One load: the page once, then the base, before the load.
 ; CHECK-LABEL: load:
@@ -58,4 +62,16 @@ define i64 @woffset(ptr %p, i32 %i) {
 define i64 @fetch_add(ptr %p, i64 %v) {
   %r = atomicrmw add ptr %p, i64 %v seq_cst
   ret i64 %r
+}
+
+; At -O0 a compare-and-swap stays a pseudo until after register allocation:
+; its load-exclusive is sent by a fallback, through a free register.
+; O0-LABEL: cas:
+; O0:       adrp [[P:x[0-9]+]], __hbng_chan
+; O0-NEXT:  str [[B:x[0-9]+]], {{\[}}[[P]]{{\]}}
+; O0-NEXT:  ldaxr {{w[0-9]+}}, {{\[}}[[B]]{{\]}}
+define i32 @cas(ptr %p, i32 %old, i32 %new) {
+  %pair = cmpxchg ptr %p, i32 %old, i32 %new seq_cst seq_cst
+  %r = extractvalue { i32, i1 } %pair, 0
+  ret i32 %r
 }

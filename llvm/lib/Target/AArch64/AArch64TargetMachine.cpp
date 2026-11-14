@@ -245,7 +245,9 @@ static cl::opt<bool>
                cl::init(false), cl::Hidden);
 
 // HBNG prototype: decide the sends before register allocation, as pseudos
-// storing to the page of __hbng_chan (no reserved register).
+// storing to the page of __hbng_chan (no reserved register). The pass after
+// register allocation then checks them and adds the sends that only exist
+// there (fallbacks).
 static cl::opt<bool> EnableHBNGPreRASends(
     "hbng-prera-sends",
     cl::desc("With -hbng: insert the sends before register allocation, "
@@ -310,6 +312,7 @@ LLVMInitializeAArch64Target() {
   // HBNG: Initialize STM pass
   initializeAArch64HBNGSendToSTMPass(PR);
   initializeAArch64HBNGPreRASendsPass(PR);
+  initializeAArch64HBNGCheckSendsPass(PR);
 }
 
 bool AArch64TargetMachine::isGlobalISelOptNone() const {
@@ -981,9 +984,11 @@ void AArch64PassConfig::addPostBBSections() {
   // HBNG: insert the stores that send base register values down the STM
   // before branch relaxation and jump-table compression, so that both measure
   // the code with the sends in it. The annotation pass, later, skips them.
-  // With -hbng-prera-sends, the sends are already there.
-  if (EnableHBNG && !EnableHBNGPreRASends)
-    addPass(createAArch64HBNGSendToSTMPass());
+  // With -hbng-prera-sends, the sends are already there: the pass checks them
+  // against the final code and adds the missing ones.
+  if (EnableHBNG)
+    addPass(EnableHBNGPreRASends ? createAArch64HBNGCheckSendsPass()
+                                 : createAArch64HBNGSendToSTMPass());
   // Relax conditional branch instructions if they're otherwise out of
   // range of their destination.
   if (BranchRelaxation)
