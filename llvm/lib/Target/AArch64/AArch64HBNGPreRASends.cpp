@@ -31,7 +31,7 @@
 //   new value of FP, the send right after its write). Where not, it inserts a
 //   fallback send. A fallback needs a register for the page: one still
 //   holding it from a send of the block, else a free register (an adrp of
-//   the page).
+//   the page), else a register saved on the stack around the send.
 //
 // The sends stay pseudos until emission (AArch64AsmPrinter), so the scheduler
 // and the load/store optimizer leave them in place (side effects) and the
@@ -72,6 +72,7 @@ STATISTIC(NumFallbackRegs, "Registers sent by fallbacks");
 STATISTIC(NumFbPageReused, "Fallbacks through a register still holding the "
                            "page");
 STATISTIC(NumFbPageScratch, "Fallbacks through a free register (adrp)");
+STATISTIC(NumFbSpills, "Fallbacks through a register saved on the stack");
 // The final code.
 STATISTIC(NumFinalSendInstrs, "Send instructions emitted");
 STATISTIC(NumFinalSentRegs, "Registers sent in the final code");
@@ -382,8 +383,9 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
   };
 
   // The page: a register still holding it (not written since, nor by MI when
-  // sending after it), else a free one.
+  // sending after it), else a free one, else one saved on the stack.
   Register Page;
+  bool Spill = false;
   if (KnownPage && !(After && MI.modifiesRegister(KnownPage, TRI))) {
     Page = KnownPage;
     ++NumFbPageReused;
@@ -407,13 +409,28 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
         Page = R;
         break;
       }
-    if (!Page)
-      reportFatalInternalError("HBNG: no free register for the channel page");
-    ++NumFbPageScratch;
+    if (Page) {
+      ++NumFbPageScratch;
+    } else {
+      for (MCPhysReg R : PageRegOrder)
+        if (Candidate(R)) {
+          Page = R;
+          break;
+        }
+      assert(Page && "HBNG: no register to hold the channel page");
+      Spill = true;
+      ++NumFbSpills;
+      Inserted.insert(
+          BuildMI(MBB, Where, DL, TII->get(AArch64::STRXpre), AArch64::SP)
+              .addReg(Page)
+              .addReg(AArch64::SP)
+              .addImm(-16));
+    }
     Inserted.insert(BuildMI(MBB, Where, DL, TII->get(AArch64::ADRP), Page)
                         .addExternalSymbol(HBNGChannelSymbol,
                                            AArch64II::MO_PAGE));
-    // The adrp writes the register: its earlier send no longer pairs.
+    // The adrp (and the reload) write the register: its earlier send no
+    // longer pairs.
     if (MachineInstr *&S = Avail[Page])
       S = nullptr;
   }
@@ -426,7 +443,15 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
     Inserted.insert(S);
     Avail[R] = S;
   }
-  KnownPage = Page;
+
+  if (Spill)
+    Inserted.insert(BuildMI(MBB, Where, DL, TII->get(AArch64::LDRXpost))
+                        .addDef(AArch64::SP)
+                        .addDef(Page)
+                        .addReg(AArch64::SP)
+                        .addImm(16));
+  else
+    KnownPage = Page;
 }
 
 // Every value an annotation refers to (<Xn>, an address register, a source

@@ -1,0 +1,19 @@
+# RUN: llc -mtriple=aarch64-linux-musl -hbng -hbng-prera-sends -run-pass=hbng-check-sends -verify-machineinstrs -o - %s | FileCheck %s
+
+# A store with no send, every register a fallback may take for the page live:
+# one is saved on the stack around the send.
+# CHECK-LABEL: name: spill
+# CHECK:      early-clobber $sp = STRXpre $x9, $sp, -16
+# CHECK-NEXT: $x9 = ADRP target-flags(aarch64-page) &__hbng_chan
+# CHECK-NEXT: HBNG_SEND $x9, $x1
+# CHECK-NEXT: early-clobber $sp, $x9 = LDRXpost $sp, 16
+# CHECK-NEXT: STRXui $x0, $x1, 0
+---
+name: spill
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x0, $x1, $x2, $x3, $x4, $x5, $x6, $x7, $x8, $x9, $x10, $x11, $x12, $x13, $x14, $x15, $x16, $x17, $x18, $x19, $x20, $x21, $x22, $x23, $x24, $x25, $x26, $x27, $x28, $lr
+    STRXui $x0, $x1, 0
+    RET undef $lr, implicit $x0, implicit $x1, implicit $x2, implicit $x3, implicit $x4, implicit $x5, implicit $x6, implicit $x7, implicit $x8, implicit $x9, implicit $x10, implicit $x11, implicit $x12, implicit $x13, implicit $x14, implicit $x15, implicit $x16, implicit $x17, implicit $x18, implicit $x19, implicit $x20, implicit $x21, implicit $x22, implicit $x23, implicit $x24, implicit $x25, implicit $x26, implicit $x27, implicit $x28, implicit $lr
+...
