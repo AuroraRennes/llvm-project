@@ -29,7 +29,9 @@
 //   that physical register in the same block, not written between the send
 //   and the access (for a store-exclusive, the nearest following one; for a
 //   new value of FP, the send right after its write). Where not, it inserts a
-//   fallback send, through a free register loaded with the page (an adrp).
+//   fallback send. A fallback needs a register for the page: one still
+//   holding it from a send of the block, else a free register (an adrp of
+//   the page).
 //
 // The sends stay pseudos until emission (AArch64AsmPrinter), so the scheduler
 // and the load/store optimizer leave them in place (side effects) and the
@@ -67,6 +69,9 @@ STATISTIC(NumPreRAPages, "Channel page adrps inserted before register "
 // Fallbacks: one event per access, registers apart.
 STATISTIC(NumFallbacks, "Fallback events (accesses sent after RA)");
 STATISTIC(NumFallbackRegs, "Registers sent by fallbacks");
+STATISTIC(NumFbPageReused, "Fallbacks through a register still holding the "
+                           "page");
+STATISTIC(NumFbPageScratch, "Fallbacks through a free register (adrp)");
 // The final code.
 STATISTIC(NumFinalSendInstrs, "Send instructions emitted");
 STATISTIC(NumFinalSentRegs, "Registers sent in the final code");
@@ -226,6 +231,8 @@ class AArch64HBNGCheckSends : public MachineFunctionPass {
   // The sends some value pairs with.
   SmallPtrSet<MachineInstr *, 16> Used;
   SmallPtrSet<MachineInstr *, 16> Inserted; // by fallbacks: not checked
+  // A register holding the channel page, from a send or an adrp of the block.
+  Register KnownPage;
 
   SmallVector<Register, 4> addressSends(const MachineInstr &MI,
                                         const HBNGMemAccess &A) const;
@@ -275,11 +282,14 @@ void AArch64HBNGCheckSends::noteWrites(const MachineInstr &MI) {
   for (auto &[R, S] : Avail)
     if (S && R != AArch64::XZR && MI.modifiesRegister(R, TRI))
       S = nullptr;
+  if (KnownPage && MI.modifiesRegister(KnownPage, TRI))
+    KnownPage = Register();
 }
 
 void AArch64HBNGCheckSends::noteSend(MachineInstr &Send) {
   for (Register R : getHBNGSendPseudoRegs(Send))
     Avail[R] = &Send;
+  KnownPage = Send.getOperand(0).getReg();
 }
 
 // MI's values pair with the nearest preceding send of each register, which
@@ -353,13 +363,14 @@ void AArch64HBNGCheckSends::checkAfter(MachineInstr &MI,
   }
 }
 
-// Sends Regs at Where through a free register loaded with the page, marks
-// them used and notes them as the nearest sends of their registers.
+// Sends Regs at Where through a register holding the page, marks them used
+// and notes them as the nearest sends of their registers.
 void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
                                            MachineBasicBlock::iterator Where,
                                            const MachineInstr &MI,
                                            ArrayRef<Register> Regs) {
   const DebugLoc &DL = MI.getDebugLoc();
+  bool After = Where != MI.getIterator();
   ++NumFallbacks;
   NumFallbackRegs += Regs.size();
 
@@ -370,24 +381,42 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
            !llvm::is_contained(Regs, R);
   };
 
+  // The page: a register still holding it (not written since, nor by MI when
+  // sending after it), else a free one.
   Register Page;
-  LivePhysRegs Live(*TRI);
-  Live.addLiveOuts(MBB);
-  for (auto I = MBB.end(); I != Where;)
-    Live.stepBackward(*--I);
-  for (MCPhysReg R : PageRegOrder)
-    if (Candidate(R) && Live.available(*MRI, R)) {
-      Page = R;
-      break;
+  if (KnownPage && !(After && MI.modifiesRegister(KnownPage, TRI))) {
+    Page = KnownPage;
+    ++NumFbPageReused;
+    // Its last use may have killed it.
+    for (auto I = Where; I != MBB.begin();) {
+      --I;
+      bool Defines = I->modifiesRegister(Page, TRI);
+      for (MachineOperand &MO : I->operands())
+        if (MO.isReg() && MO.isUse() && MO.getReg() == Page)
+          MO.setIsKill(false);
+      if (Defines)
+        break;
     }
-  if (!Page)
-    reportFatalInternalError("HBNG: no free register for the channel page");
-  Inserted.insert(BuildMI(MBB, Where, DL, TII->get(AArch64::ADRP), Page)
-                      .addExternalSymbol(HBNGChannelSymbol,
-                                         AArch64II::MO_PAGE));
-  // The adrp writes the register: its earlier send no longer pairs.
-  if (MachineInstr *&S = Avail[Page])
-    S = nullptr;
+  } else {
+    LivePhysRegs Live(*TRI);
+    Live.addLiveOuts(MBB);
+    for (auto I = MBB.end(); I != Where;)
+      Live.stepBackward(*--I);
+    for (MCPhysReg R : PageRegOrder)
+      if (Candidate(R) && Live.available(*MRI, R)) {
+        Page = R;
+        break;
+      }
+    if (!Page)
+      reportFatalInternalError("HBNG: no free register for the channel page");
+    ++NumFbPageScratch;
+    Inserted.insert(BuildMI(MBB, Where, DL, TII->get(AArch64::ADRP), Page)
+                        .addExternalSymbol(HBNGChannelSymbol,
+                                           AArch64II::MO_PAGE));
+    // The adrp writes the register: its earlier send no longer pairs.
+    if (MachineInstr *&S = Avail[Page])
+      S = nullptr;
+  }
 
   for (Register R : Regs) {
     MachineInstr *S = BuildMI(MBB, Where, DL, TII->get(AArch64::HBNG_SEND))
@@ -397,6 +426,7 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
     Inserted.insert(S);
     Avail[R] = S;
   }
+  KnownPage = Page;
 }
 
 // Every value an annotation refers to (<Xn>, an address register, a source
@@ -420,6 +450,7 @@ bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
     Avail.clear();
     Used.clear();
     Inserted.clear();
+    KnownPage = Register();
     // What a fallback inserts after MI may or may not be visited: it is
     // skipped, insertFallback notes it.
     for (MachineInstr &MI : make_early_inc_range(MBB)) {
@@ -457,6 +488,9 @@ bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
         Register FP = AArch64::FP;
         insertFallback(MBB, afterOwnSends(MI), MI, FP);
       }
+
+      if (isChannelPage(MI))
+        KnownPage = MI.getOperand(0).getReg();
 
       if (endsAnnotationBlock(MI))
         Avail.clear();

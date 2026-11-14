@@ -82,6 +82,20 @@ define void @frame() "frame-pointer"="all" {
   ret void
 }
 
+; A fallback reuses a register still holding the page: the FP reload is sent
+; through the load's page register, with no second adrp.
+; CHECK-LABEL: reuse:
+; CHECK:       adrp [[P:x[0-9]+]], __hbng_chan
+; CHECK-NEXT:  str x0, {{\[}}[[P]]{{\]}}
+; CHECK-NEXT:  ldr x0, [x0]
+; CHECK-NEXT:  ldp x29, x30, [sp], #16
+; CHECK-NEXT:  str x29, {{\[}}[[P]]{{\]}}
+; CHECK-NEXT:  ret
+define i64 @reuse(ptr %p) "frame-pointer"="all" {
+  %v = load i64, ptr %p
+  ret i64 %v
+}
+
 ; SP written from a register (a variable-size alloca): its source is sent
 ; before the write, by a fallback (the write only exists after register
 ; allocation).
