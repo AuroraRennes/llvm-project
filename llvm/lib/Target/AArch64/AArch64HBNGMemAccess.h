@@ -24,7 +24,9 @@
 #include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include <cassert>
 #include <optional>
 
@@ -497,12 +499,15 @@ inline SmallVector<Register, 2> getHBNGSendPseudoRegs(const MachineInstr &MI) {
   return {MI.getOperand(1).getReg()};
 }
 
-// Whether MI is a send: a send pseudo, or a store based on the reserved
-// register (the STM send pass, after register allocation). The annotation
-// pass runs after both and gives sends their own lines.
+// Whether MI is a send: a send pseudo, or, with x18 reserved for the STM
+// address (the send pass after register allocation), a store based on x18.
+// The annotation pass runs after both and gives sends their own lines.
 inline bool isHBNGSend(const MachineInstr &MI) {
   if (isHBNGSendPseudo(MI))
     return true;
+  const MachineFunction *MF = MI.getMF();
+  if (MF && !MF->getRegInfo().isReserved(HBNGSendReg))
+    return false; // x18 is an ordinary register
   std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI);
   return A && A->IsStore && MI.getOperand(A->Base).getReg() == HBNGSendReg;
 }
