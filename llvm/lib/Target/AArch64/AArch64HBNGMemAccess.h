@@ -25,6 +25,7 @@
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/CodeGen/MachineInstrBundle.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include <cassert>
 #include <optional>
@@ -482,6 +483,20 @@ inline bool isHBNGFPSentAfter(const MachineInstr &MI,
                               const TargetRegisterInfo *TRI) {
   return hbngDefinesReg(MI, AArch64::FP, TRI) &&
          !isHBNGComputedTrackedWrite(MI, AArch64::FP, TRI);
+}
+
+// Whether MI is a bundle holding a load or store HBNG describes. The send
+// passes see a bundle as one instruction: they would miss such an access, and
+// could not put its sends inside the bundle. AArch64 bundles (SVE movprfx,
+// calls with a marker or a BTI) hold none.
+inline bool bundleHasHBNGAccess(const MachineInstr &MI) {
+  if (!MI.isBundle())
+    return false;
+  auto End = getBundleEnd(MI.getIterator());
+  for (auto I = std::next(MI.getIterator()); I != End; ++I)
+    if (getHBNGMemAccess(*I))
+      return true;
+  return false;
 }
 
 // A send decided before register allocation is a pseudo-instruction until

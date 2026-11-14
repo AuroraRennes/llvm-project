@@ -159,15 +159,8 @@ bool AArch64HBNGSendToSTM::runOnMachineFunction(MachineFunction &MF) {
         // Early increment: the sends inserted after an instruction are not
         // visited (they are stores themselves).
         for (MachineInstr &MI : make_early_inc_range(MBB)) {
-            // The pass runs before the bundles are unpacked. AArch64 bundles
-            // (SVE movprfx, calls with a marker or a BTI) hold no load or
-            // store; the sends would otherwise have to go inside them.
-            assert((!MI.isBundle() ||
-                    llvm::none_of(make_range(std::next(MI.getIterator()),
-                                             getBundleEnd(MI.getIterator())),
-                                  [](const MachineInstr &BI) {
-                                      return getHBNGMemAccess(BI).has_value();
-                                  })) &&
+            // The pass runs before the bundles are unpacked.
+            assert(!bundleHasHBNGAccess(MI) &&
                    "HBNG: load or store inside a bundle");
 
             // The address registers of the loads/stores the annotation pass

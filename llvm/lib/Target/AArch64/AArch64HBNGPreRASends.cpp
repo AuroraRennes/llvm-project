@@ -424,13 +424,8 @@ bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
     for (MachineInstr &MI : make_early_inc_range(MBB)) {
       if (Inserted.count(&MI))
         continue;
-      assert((!MI.isBundle() ||
-              llvm::none_of(make_range(std::next(MI.getIterator()),
-                                       getBundleEnd(MI.getIterator())),
-                            [](const MachineInstr &BI) {
-                              return getHBNGMemAccess(BI).has_value();
-                            })) &&
-             "HBNG: load or store inside a bundle");
+      // The pass runs before the bundles are unpacked.
+      assert(!bundleHasHBNGAccess(MI) && "HBNG: load or store inside a bundle");
 
       if (isHBNGSendPseudo(MI)) {
         noteSend(MI);
