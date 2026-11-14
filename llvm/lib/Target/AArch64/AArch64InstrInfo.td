@@ -11994,6 +11994,15 @@ let Predicates = [HasTEV] in {
 let isPseudo = 1, hasSideEffects = 0 in
 def HBNG_ATOM_LABEL : Pseudo<(outs), (ins), []>, Sched<[]>;
 
+// HBNG send decided before register allocation: a store of $a to the channel
+// page, whose address $page holds. Inserted on machine SSA before the access
+// whose annotation refers to the value, it stays a pseudo until emission:
+// side effects keep it in place against the accesses (no merge, move or
+// deletion).
+let isPseudo = 1, hasSideEffects = 1, mayStore = 1, mayLoad = 0, Size = 4 in
+def HBNG_SEND : Pseudo<(outs), (ins GPR64common:$page, GPR64all:$a), []>,
+                Sched<[WriteST]>;
+
 include "AArch64InstrAtomics.td"
 include "AArch64SVEInstrInfo.td"
 include "AArch64SMEInstrInfo.td"

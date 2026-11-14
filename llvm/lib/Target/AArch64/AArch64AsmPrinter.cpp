@@ -3988,6 +3988,15 @@ void AArch64AsmPrinter::emitInstruction(const MachineInstr *MI) {
                                 MI->getOperand(1).getImm());
     return;
 
+  // HBNG: a send decided before register allocation, a store to the channel
+  // page (offset 0: __hbng_chan is page aligned).
+  case AArch64::HBNG_SEND:
+    EmitToStreamer(*OutStreamer, MCInstBuilder(AArch64::STRXui)
+                                     .addReg(MI->getOperand(1).getReg())
+                                     .addReg(MI->getOperand(0).getReg())
+                                     .addImm(0));
+    return;
+
   // HBNG: Emit a corresponding label when reaching a pseudo instruction
   case AArch64::HBNG_ATOM_LABEL: {
       const auto *FI = MF->getInfo<AArch64FunctionInfo>();
