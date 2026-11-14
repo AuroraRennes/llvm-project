@@ -100,7 +100,10 @@ struct HBNGMemAccess {
 // Operands, in order: the written-back base (post-index), the register list
 // (loads: its def, then for a lane form the tied use), the lane number (lane
 // forms), the base, the increment register (post-index).
-inline std::optional<HBNGMemAccess> getHBNGVecAccess(const MachineInstr &MI) {
+// PreRA: MI is on machine SSA, where the base may be a virtual register or a
+// frame index, so the operands are not checked against physical classes.
+inline std::optional<HBNGMemAccess> getHBNGVecAccess(const MachineInstr &MI,
+                                                     bool PreRA = false) {
   using M = HBNGMemAccess;
   bool IsStore = false, Post = false;
   M::VecKind Kind = M::NotVec;
@@ -177,8 +180,9 @@ inline std::optional<HBNGMemAccess> getHBNGVecAccess(const MachineInstr &MI) {
   A.Base = Next;
   A.Offset = Post ? int(A.Base) + 1 : -1;
 
-  assert(MI.getOperand(A.Base).isReg() &&
-         AArch64::GPR64spRegClass.contains(MI.getOperand(A.Base).getReg()) &&
+  assert((PreRA || (MI.getOperand(A.Base).isReg() &&
+                    AArch64::GPR64spRegClass.contains(
+                        MI.getOperand(A.Base).getReg()))) &&
          "HBNG: base operand is not a 64-bit base register");
   assert((A.Lane < 0 || MI.getOperand(A.Lane).isImm()) &&
          "HBNG: lane number expected");
@@ -225,8 +229,10 @@ inline std::optional<int64_t> getHBNGWritebackBytes(const MachineInstr &MI,
   return Off.getImm() * (A.isScaledImm() ? int64_t(A.Size) : 1);
 }
 
-// The description of MI if HBNG supports it, std::nullopt otherwise.
-inline std::optional<HBNGMemAccess> getHBNGMemAccess(const MachineInstr &MI) {
+// The description of MI if HBNG supports it, std::nullopt otherwise. PreRA:
+// as for getHBNGVecAccess.
+inline std::optional<HBNGMemAccess> getHBNGMemAccess(const MachineInstr &MI,
+                                                     bool PreRA = false) {
   using M = HBNGMemAccess;
   bool IsStore = false;
   unsigned Size = 0;
@@ -260,7 +266,7 @@ inline std::optional<HBNGMemAccess> getHBNGMemAccess(const MachineInstr &MI) {
 
   switch (MI.getOpcode()) {
   default:
-    return getHBNGVecAccess(MI);
+    return getHBNGVecAccess(MI, PreRA);
   // Loads: integer, sign-extending, FP/SIMD.
   LD_ALL(LDRBB, LDURBB, 1) LD_ALL(LDRSBW, LDURSBW, 1) LD_ALL(LDRSBX, LDURSBX, 1)
   LD_ALL(LDRHH, LDURHH, 2) LD_ALL(LDRSHW, LDURSHW, 2) LD_ALL(LDRSHX, LDURSHX, 2)
@@ -344,8 +350,9 @@ inline std::optional<HBNGMemAccess> getHBNGMemAccess(const MachineInstr &MI) {
   A.Base = A.FirstData + NumData;
   A.Offset = Mode == M::NoOffset ? -1 : int(A.Base) + 1;
 
-  assert(MI.getOperand(A.Base).isReg() &&
-         AArch64::GPR64spRegClass.contains(MI.getOperand(A.Base).getReg()) &&
+  assert((PreRA || (MI.getOperand(A.Base).isReg() &&
+                    AArch64::GPR64spRegClass.contains(
+                        MI.getOperand(A.Base).getReg()))) &&
          "HBNG: base operand is not a 64-bit base register");
   assert((!A.isRegOffset() || MI.getOperand(A.Offset).isReg()) &&
          "HBNG: register offset expected");
