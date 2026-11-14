@@ -476,9 +476,26 @@ inline bool isHBNGFPSentAfter(const MachineInstr &MI,
          !isHBNGComputedTrackedWrite(MI, AArch64::FP, TRI);
 }
 
-// Whether MI is a send inserted by the STM send pass (a store based on the
-// reserved register). The annotation pass runs after it and skips them.
+// A send decided before register allocation is a pseudo-instruction until
+// emission, where it becomes a store to the channel page:
+//   HBNG_SEND page, a            str a, [page]
+// page holds the address of __hbng_chan (an adrp of it, page aligned).
+inline bool isHBNGSendPseudo(const MachineInstr &MI) {
+  return MI.getOpcode() == AArch64::HBNG_SEND;
+}
+
+// The registers a send pseudo sends, in the order the channel receives them.
+inline SmallVector<Register, 2> getHBNGSendPseudoRegs(const MachineInstr &MI) {
+  assert(isHBNGSendPseudo(MI) && "HBNG: not a send pseudo");
+  return {MI.getOperand(1).getReg()};
+}
+
+// Whether MI is a send: a send pseudo, or a store based on the reserved
+// register (the STM send pass, after register allocation). The annotation
+// pass runs after both and gives sends their own lines.
 inline bool isHBNGSend(const MachineInstr &MI) {
+  if (isHBNGSendPseudo(MI))
+    return true;
   std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI);
   return A && A->IsStore && MI.getOperand(A->Base).getReg() == HBNGSendReg;
 }

@@ -1173,12 +1173,19 @@ std::vector<std::string> AArch64HBNGAnnotate::genVecMemAnnotation(
 // and the STM emits the higher address first: "send b", then "send a".
 // FP is never sent as an address (it is tracked): a send of x29 follows a
 // write of FP whose value the annotations cannot compute, and gives it.
+// A send pseudo (HBNG_SEND) sends its one register.
 std::vector<std::string> AArch64HBNGAnnotate::genSendLines(MachineInstr &MI) {
-  std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI);
+  SmallVector<Register, 2> Regs;
+  if (isHBNGSendPseudo(MI)) {
+    Regs = getHBNGSendPseudoRegs(MI);
+  } else {
+    std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI);
+    for (unsigned I = A->NumData; I-- > 0;)
+      Regs.push_back(getHBNGDataReg(MI, *A, I, TRI));
+  }
   std::vector<std::string> Lines;
   bool SendsFP = false;
-  for (unsigned I = A->NumData; I-- > 0;) {
-    Register R = getHBNGDataReg(MI, *A, I, TRI);
+  for (Register R : Regs) {
     // The zero register as an offset is sent too: a FIFO entry of 0.
     Lines.push_back(R == AArch64::XZR
                         ? std::string("send XZR\n")
