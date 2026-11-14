@@ -244,6 +244,14 @@ static cl::opt<bool>
                         "and block table"),
                cl::init(false), cl::Hidden);
 
+// HBNG prototype: decide the sends before register allocation, as pseudos
+// storing to the page of __hbng_chan (no reserved register).
+static cl::opt<bool> EnableHBNGPreRASends(
+    "hbng-prera-sends",
+    cl::desc("With -hbng: insert the sends before register allocation, "
+             "storing to the page of __hbng_chan (no reserved register)"),
+    cl::init(false), cl::Hidden);
+
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void
 LLVMInitializeAArch64Target() {
   // Register the target.
@@ -301,6 +309,7 @@ LLVMInitializeAArch64Target() {
   initializeAArch64HBNGAnnotatePass(PR);
   // HBNG: Initialize STM pass
   initializeAArch64HBNGSendToSTMPass(PR);
+  initializeAArch64HBNGPreRASendsPass(PR);
 }
 
 bool AArch64TargetMachine::isGlobalISelOptNone() const {
@@ -884,6 +893,9 @@ void AArch64PassConfig::addPreRegAlloc() {
   }
   if (TM->getOptLevel() != CodeGenOptLevel::None && EnableMachinePipeliner)
     addPass(&MachinePipelinerID);
+  // HBNG: the sends, on machine SSA after its optimizations
+  if (EnableHBNG && EnableHBNGPreRASends)
+    addPass(createAArch64HBNGPreRASendsPass());
 }
 
 void AArch64PassConfig::addPostRewrite() {
@@ -969,7 +981,8 @@ void AArch64PassConfig::addPostBBSections() {
   // HBNG: insert the stores that send base register values down the STM
   // before branch relaxation and jump-table compression, so that both measure
   // the code with the sends in it. The annotation pass, later, skips them.
-  if (EnableHBNG)
+  // With -hbng-prera-sends, the sends are already there.
+  if (EnableHBNG && !EnableHBNGPreRASends)
     addPass(createAArch64HBNGSendToSTMPass());
   // Relax conditional branch instructions if they're otherwise out of
   // range of their destination.

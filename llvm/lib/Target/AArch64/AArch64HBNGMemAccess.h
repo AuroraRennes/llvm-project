@@ -7,10 +7,9 @@
 //===----------------------------------------------------------------------===//
 //
 // One description of the loads and stores supported by HBNG, shared by the
-// annotation pass (which describes the access) and the STM send pass (which
-// sends the address registers the annotation refers to), so that the two
-// cannot disagree on which instructions are covered or where their operands
-// are.
+// annotation pass (which describes the access) and the send passes (which
+// send the address registers the annotation refers to), so that they cannot
+// disagree on which instructions are covered or where their operands are.
 //
 //===----------------------------------------------------------------------===//
 

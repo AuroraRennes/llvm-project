@@ -100,6 +100,7 @@ add_llvm_target(AArch64CodeGen
 
   AArch64HBNGAnnotate.cpp
   AArch64HBNGSendToSTM.cpp
+  AArch64HBNGPreRASends.cpp
 
   DEPENDS
   intrinsics_gen

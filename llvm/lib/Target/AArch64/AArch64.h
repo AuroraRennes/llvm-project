@@ -83,6 +83,8 @@ ModulePass *createSVEIntrinsicOptsPass();
 FunctionPass *createAArch64HBNGAnnotatePass();
 // HBNG: Register STM pass
 FunctionPass *createAArch64HBNGSendToSTMPass();
+// HBNG: sends decided before register allocation (-hbng-prera-sends)
+FunctionPass *createAArch64HBNGPreRASendsPass();
 Pass *createSVEShuffleOptsPass();
 InstructionSelector *
 createAArch64InstructionSelector(const AArch64TargetMachine &,
@@ -213,6 +215,7 @@ void initializeAArch64Arm64ECCallLoweringPass(PassRegistry &);
 void initializeAArch64HBNGAnnotatePass(PassRegistry &);
 // HBNG: Initialize STM pass
 void initializeAArch64HBNGSendToSTMPass(PassRegistry &);
+void initializeAArch64HBNGPreRASendsPass(PassRegistry &);
 
 class SVEShuffleOptsPass : public PassInfoMixin<SVEShuffleOptsPass> {
   const AArch64TargetMachine &TM;
