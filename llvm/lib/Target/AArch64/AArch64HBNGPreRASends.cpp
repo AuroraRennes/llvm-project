@@ -26,9 +26,9 @@
 //   optimizer, scheduling and the prologue and epilogue: for every access the
 //   annotations describe, each register its annotation refers to must pair
 //   with a send: the nearest preceding send of that physical register in the
-//   same block, not written between the send and the access. Where not, it
-//   inserts a fallback send, through a free register loaded with the page
-//   (an adrp).
+//   same block, not written between the send and the access (for a
+//   store-exclusive, the nearest following one). Where not, it inserts a
+//   fallback send, through a free register loaded with the page (an adrp).
 //
 // The sends stay pseudos until emission (AArch64AsmPrinter), so the scheduler
 // and the load/store optimizer leave them in place (side effects) and the
@@ -222,6 +222,8 @@ class AArch64HBNGCheckSends : public MachineFunctionPass {
   // each register, its nearest preceding send, if no instruction wrote the
   // register since.
   DenseMap<Register, MachineInstr *> Avail;
+  // The sends some value pairs with.
+  SmallPtrSet<MachineInstr *, 16> Used;
   SmallPtrSet<MachineInstr *, 16> Inserted; // by fallbacks: not checked
 
   SmallVector<Register, 4> addressSends(const MachineInstr &MI,
@@ -229,6 +231,8 @@ class AArch64HBNGCheckSends : public MachineFunctionPass {
   void noteWrites(const MachineInstr &MI);
   void noteSend(MachineInstr &Send);
   void checkBefore(MachineInstr &MI, ArrayRef<Register> Regs);
+  void checkAfter(MachineInstr &MI, ArrayRef<Register> Regs);
+  MachineBasicBlock::iterator afterOwnSends(MachineInstr &MI);
   void insertFallback(MachineBasicBlock &MBB, MachineBasicBlock::iterator Where,
                       const MachineInstr &MI, ArrayRef<Register> Regs);
 
@@ -285,15 +289,71 @@ void AArch64HBNGCheckSends::checkBefore(MachineInstr &MI,
   if (Regs.empty())
     return;
   SmallVector<Register, 4> Missing;
-  for (Register R : Regs)
-    if (!Avail.lookup(R))
+  for (Register R : Regs) {
+    if (MachineInstr *S = Avail.lookup(R))
+      Used.insert(S);
+    else
       Missing.push_back(R);
+  }
   if (!Missing.empty())
     insertFallback(*MI.getParent(), MI.getIterator(), MI, Missing);
 }
 
-// Sends Regs at Where through a free register loaded with the page, and
-// notes them as the nearest sends of their registers.
+// The point after the sends that follow MI and pair with it (a
+// store-exclusive's), where a fallback for MI goes.
+MachineBasicBlock::iterator
+AArch64HBNGCheckSends::afterOwnSends(MachineInstr &MI) {
+  auto Where = std::next(MI.getIterator());
+  while (Where != MI.getParent()->end() && isHBNGSendPseudo(*Where) &&
+         Used.count(&*Where))
+    ++Where;
+  return Where;
+}
+
+// A store-exclusive sends after itself: its values pair with the nearest
+// following send of each register that neither it nor an instruction in
+// between writes (the one the pass before register allocation inserted),
+// else with a preceding one. A fallback sends the missing ones right after
+// MI.
+void AArch64HBNGCheckSends::checkAfter(MachineInstr &MI,
+                                       ArrayRef<Register> Regs) {
+  if (Regs.empty())
+    return;
+  MachineBasicBlock &MBB = *MI.getParent();
+  SmallVector<Register, 4> Missing;
+  SmallPtrSet<MachineInstr *, 4> Taken;
+  for (Register R : Regs) {
+    MachineInstr *Found = nullptr;
+    if (R == AArch64::XZR || !MI.modifiesRegister(R, TRI))
+      for (auto I = std::next(MI.getIterator()); I != MBB.end(); ++I) {
+        if (isHBNGSendPseudo(*I) && !Taken.count(&*I) &&
+            getHBNGSendPseudoRegs(*I)[0] == R) {
+          Found = &*I;
+          break;
+        }
+        if (R != AArch64::XZR && I->modifiesRegister(R, TRI))
+          break;
+      }
+    if (!Found)
+      Found = Avail.lookup(R);
+    if (Found) {
+      Taken.insert(Found);
+      Used.insert(Found);
+    } else {
+      Missing.push_back(R);
+    }
+  }
+  if (!Missing.empty()) {
+    // MI may have killed the registers sent after it.
+    for (MachineOperand &MO : MI.operands())
+      if (MO.isReg() && MO.isUse() && llvm::is_contained(Missing, MO.getReg()))
+        MO.setIsKill(false);
+    insertFallback(MBB, afterOwnSends(MI), MI, Missing);
+  }
+}
+
+// Sends Regs at Where through a free register loaded with the page, marks
+// them used and notes them as the nearest sends of their registers.
 void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
                                            MachineBasicBlock::iterator Where,
                                            const MachineInstr &MI,
@@ -332,6 +392,7 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
     MachineInstr *S = BuildMI(MBB, Where, DL, TII->get(AArch64::HBNG_SEND))
                           .addReg(Page)
                           .addReg(R);
+    Used.insert(S);
     Inserted.insert(S);
     Avail[R] = S;
   }
@@ -340,8 +401,9 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
 // Every address register an annotation refers to (<Xn>) must pair with a
 // send: the nearest preceding send of Xn in the block (the annotation pass's:
 // a machine block, also ended after a call or an svc) that no instruction in
-// between writes. The pass checks each in program order and inserts the
-// missing sends (fallbacks).
+// between writes, else, for a store-exclusive, the nearest following one.
+// The pass checks each in program order and inserts the missing sends
+// (fallbacks).
 bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
   if (MF.getFunction().hasFnAttribute("hbng_no_instr"))
     return false;
@@ -355,6 +417,7 @@ bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
 
   for (MachineBasicBlock &MBB : MF) {
     Avail.clear();
+    Used.clear();
     Inserted.clear();
     // What a fallback inserts after MI may or may not be visited: it is
     // skipped, insertFallback notes it.
@@ -374,10 +437,14 @@ bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
         continue;
       }
 
-      // A store-exclusive's sends follow it: not checked.
-      if (std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI);
-          A && A->Status < 0)
-        checkBefore(MI, addressSends(MI, *A));
+      if (std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI)) {
+        SmallVector<Register, 4> Regs = addressSends(MI, *A);
+        // Status >= 0 describes a store-exclusive: it sends after itself.
+        if (A->Status >= 0)
+          checkAfter(MI, Regs);
+        else
+          checkBefore(MI, Regs);
+      }
 
       noteWrites(MI);
 

@@ -65,11 +65,17 @@ define i64 @fetch_add(ptr %p, i64 %v) {
 }
 
 ; At -O0 a compare-and-swap stays a pseudo until after register allocation:
-; its load-exclusive is sent by a fallback, through a free register.
+; its exclusives are sent by fallbacks, the load-exclusive's before it and
+; the store-exclusive's after it.
 ; O0-LABEL: cas:
 ; O0:       adrp [[P:x[0-9]+]], __hbng_chan
 ; O0-NEXT:  str [[B:x[0-9]+]], {{\[}}[[P]]{{\]}}
 ; O0-NEXT:  ldaxr {{w[0-9]+}}, {{\[}}[[B]]{{\]}}
+; O0-NOT:   str
+; O0:       stlxr [[S:w[0-9]+]], {{w[0-9]+}}, {{\[}}[[B]]{{\]}}
+; O0-NEXT:  adrp [[Q:x[0-9]+]], __hbng_chan
+; O0-NEXT:  str [[B]], {{\[}}[[Q]]{{\]}}
+; O0-NEXT:  cbnz [[S]]
 define i32 @cas(ptr %p, i32 %old, i32 %new) {
   %pair = cmpxchg ptr %p, i32 %old, i32 %new seq_cst seq_cst
   %r = extractvalue { i32, i1 } %pair, 0
