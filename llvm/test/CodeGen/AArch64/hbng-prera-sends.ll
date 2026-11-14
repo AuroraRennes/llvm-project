@@ -64,6 +64,26 @@ define i64 @fetch_add(ptr %p, i64 %v) {
   ret i64 %r
 }
 
+; SP written from a register (a variable-size alloca): its source is sent
+; before the write, by a fallback (the write only exists after register
+; allocation).
+; CHECK-LABEL: vla:
+; CHECK:       sub [[N:x[0-9]+]], {{x[0-9]+}}, {{x[0-9]+}}
+; CHECK-NEXT:  adrp [[P:x[0-9]+]], __hbng_chan
+; CHECK-NEXT:  str [[N]], {{\[}}[[P]]{{\]}}
+; CHECK-NEXT:  mov sp, [[N]]
+; ANNOT-LABEL: HBNG_vla_annot:
+; ANNOT:       .ascii "send X0\n"
+; ANNOT-NEXT:  .ascii "@{{[0-9]+}}\n"
+; ANNOT-NEXT:  .ascii "SP <- X0\n"
+; ANNOT-NEXT:  .ascii "<SP> <- <X0>\n"
+declare void @g(ptr)
+define void @vla(i64 %n) "frame-pointer"="all" {
+  %a = alloca i8, i64 %n
+  call void @g(ptr %a)
+  ret void
+}
+
 ; At -O0 a compare-and-swap stays a pseudo until after register allocation:
 ; its exclusives are sent by fallbacks, the load-exclusive's before it and
 ; the store-exclusive's after it.
