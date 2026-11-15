@@ -12,8 +12,8 @@
 // The channel has a fixed address, the symbol __hbng_chan (page aligned), so
 // a send is "adrp xT, __hbng_chan" + "str xA, [xT]" and needs no reserved
 // register: the page is a virtual register like any other, which the
-// allocator rematerializes next to the send under pressure (an adrp of a
-// symbol is as cheap as a move) rather than spilling it.
+// allocator can rematerialize next to the send under pressure (an adrp of a
+// symbol is as cheap as a move) rather than spill it.
 //
 // Two passes:
 //
@@ -32,12 +32,11 @@
 //   new value of FP, the send right after its write). Where not, a send since
 //   the previous access that nothing pairs with is given the missing register
 //   instead, else it inserts a fallback send, counted by cause. A fallback
-//   needs a register for
-//   the page: one still holding it from a send of the block, else a free
-//   register (an adrp of the page), else a register saved on the stack around
-//   the send. Then the sends nothing pairs with are removed (their access is
-//   gone or uses other registers), and two adjacent sends through the same
-//   page register become one pair (an stp).
+//   needs a register for the page: one still holding it from a send of the
+//   block, else a free register (an adrp of the page), else a register saved
+//   on the stack around the send. Then the sends nothing pairs with are
+//   removed (their access is gone or uses other registers), and two adjacent
+//   sends through the same page register become one pair (an stp).
 //
 // The sends stay pseudos until emission (AArch64AsmPrinter), so the scheduler
 // and the load/store optimizer leave them in place (side effects) and the
@@ -51,8 +50,8 @@
 #include "AArch64Subtarget.h"
 #include "Utils/AArch64BaseInfo.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
@@ -84,11 +83,11 @@ STATISTIC(NumPreRAAlreadySent, "Registers not sent again before register "
                                "block)");
 STATISTIC(NumPreRAPages, "Channel page adrps inserted before register "
                          "allocation");
-// Fallbacks: one event per access, registers apart.
-// After: what became of them.
+// After register allocation: what became of the sends.
 STATISTIC(NumSendsRemoved, "Pre-RA sends nothing pairs with, removed");
 STATISTIC(NumSendsRepaired, "Pre-RA sends nothing paired with, given a "
                             "missing register instead (no fallback)");
+// Fallbacks: one event per access, registers apart.
 STATISTIC(NumFallbacks, "Fallback events (accesses sent after RA)");
 STATISTIC(NumFallbackRegs, "Registers sent by fallbacks");
 STATISTIC(NumFbPageReused, "Fallbacks through a register still holding the "
