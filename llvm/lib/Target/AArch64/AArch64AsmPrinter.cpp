@@ -3996,6 +3996,13 @@ void AArch64AsmPrinter::emitInstruction(const MachineInstr *MI) {
                                      .addReg(MI->getOperand(0).getReg())
                                      .addImm(0));
     return;
+  case AArch64::HBNG_SEND_W:
+    EmitToStreamer(*OutStreamer,
+                   MCInstBuilder(AArch64::STRXui)
+                       .addReg(getXRegFromWReg(MI->getOperand(1).getReg()))
+                       .addReg(MI->getOperand(0).getReg())
+                       .addImm(0));
+    return;
 
   // HBNG: Emit a corresponding label when reaching a pseudo instruction
   case AArch64::HBNG_ATOM_LABEL: {

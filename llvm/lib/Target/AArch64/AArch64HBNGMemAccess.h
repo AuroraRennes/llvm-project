@@ -19,6 +19,7 @@
 #include "AArch64InstrInfo.h"
 #include "AArch64RegisterInfo.h"
 #include "MCTargetDesc/AArch64AddressingModes.h"
+#include "Utils/AArch64BaseInfo.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallVector.h"
@@ -502,15 +503,20 @@ inline bool bundleHasHBNGAccess(const MachineInstr &MI) {
 // A send decided before register allocation is a pseudo-instruction until
 // emission, where it becomes a store to the channel page:
 //   HBNG_SEND page, a            str a, [page]
+//   HBNG_SEND_W page, wA         str xA, [page]
 // page holds the address of __hbng_chan (an adrp of it, page aligned).
 inline bool isHBNGSendPseudo(const MachineInstr &MI) {
-  return MI.getOpcode() == AArch64::HBNG_SEND;
+  return MI.getOpcode() == AArch64::HBNG_SEND ||
+         MI.getOpcode() == AArch64::HBNG_SEND_W;
 }
 
 // The registers a send pseudo sends, in the order the channel receives them.
 inline SmallVector<Register, 2> getHBNGSendPseudoRegs(const MachineInstr &MI) {
   assert(isHBNGSendPseudo(MI) && "HBNG: not a send pseudo");
-  return {MI.getOperand(1).getReg()};
+  Register R = MI.getOperand(1).getReg();
+  if (MI.getOpcode() == AArch64::HBNG_SEND_W && R.isPhysical())
+    R = getXRegFromWReg(R);
+  return {R};
 }
 
 // Whether MI is a send: a send pseudo, or, with x18 reserved for the STM

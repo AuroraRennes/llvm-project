@@ -112,8 +112,7 @@ class AArch64HBNGPreRASends : public MachineFunctionPass {
   Register FunctionPage;
 
   Register getPage(MachineFunction &MF);
-  Register getXReg(MachineBasicBlock &MBB, MachineBasicBlock::iterator Where,
-                   const DebugLoc &DL, Register W);
+  unsigned sendOpcode(Register R) const;
 
 public:
   static char ID;
@@ -144,26 +143,16 @@ Register AArch64HBNGPreRASends::getPage(MachineFunction &MF) {
   return FunctionPage;
 }
 
-// The X register to send for a W register offset (as in [x0, w1, sxtw #3]):
-// a send stores 64 bits, and the annotation names X1 and reads its low half.
-Register AArch64HBNGPreRASends::getXReg(MachineBasicBlock &MBB,
-                                        MachineBasicBlock::iterator Where,
-                                        const DebugLoc &DL, Register W) {
-  if (W.isPhysical())
-    return MRI->getTargetRegisterInfo()->getMatchingSuperReg(
-        W, AArch64::sub_32, &AArch64::GPR64RegClass);
-  Register Undef = MRI->createVirtualRegister(&AArch64::GPR64RegClass);
-  Register X = MRI->createVirtualRegister(&AArch64::GPR64RegClass);
-  // A 64-bit register with no defined value: its high half, which the
-  // annotation never reads.
-  BuildMI(MBB, Where, DL, TII->get(TargetOpcode::IMPLICIT_DEF), Undef);
-  // X: that register with W as its low half. The allocator gives X and W the
-  // same physical register (w1 in x1): no instruction is emitted.
-  BuildMI(MBB, Where, DL, TII->get(TargetOpcode::INSERT_SUBREG), X)
-      .addReg(Undef)
-      .addReg(W)
-      .addImm(AArch64::sub_32);
-  return X;
+// The send pseudo for R: a W register (a register offset, as in
+// [x0, w1, sxtw #3]) is sent itself, stored as its X register, whose low half
+// the annotation reads.
+unsigned AArch64HBNGPreRASends::sendOpcode(Register R) const {
+  const TargetRegisterInfo *TRI = MRI->getTargetRegisterInfo();
+  const TargetRegisterClass *RC = R.isVirtual()
+                                      ? MRI->getRegClass(R)
+                                      : TRI->getMinimalPhysRegClass(R);
+  return TRI->getRegSizeInBits(*RC) == 32 ? AArch64::HBNG_SEND_W
+                                          : AArch64::HBNG_SEND;
 }
 
 bool AArch64HBNGPreRASends::runOnMachineFunction(MachineFunction &MF) {
@@ -184,25 +173,21 @@ bool AArch64HBNGPreRASends::runOnMachineFunction(MachineFunction &MF) {
       const DebugLoc &DL = MI.getDebugLoc();
 
       // The base, unless a frame index (it becomes SP or FP, tracked) or a
-      // tracked register; the register offset, a W one as its X register.
+      // tracked register; the register offset.
       SmallVector<Register, 2> AddrRegs;
       const MachineOperand &BaseMO = MI.getOperand(A->Base);
       if (BaseMO.isReg() &&
           (BaseMO.getReg().isVirtual() || !isHBNGTrackedReg(BaseMO.getReg())))
         AddrRegs.push_back(BaseMO.getReg());
-      if (A->isRegOffset()) {
-        Register Off = MI.getOperand(A->Offset).getReg();
-        if (A->Mode == HBNGMemAccess::RegOffsetW)
-          Off = getXReg(MBB, MI.getIterator(), DL, Off);
-        AddrRegs.push_back(Off);
-      }
+      if (A->isRegOffset())
+        AddrRegs.push_back(MI.getOperand(A->Offset).getReg());
       if (AddrRegs.empty())
         continue;
 
       Register Page = getPage(MF);
       for (unsigned I = 0; I < A->NumData; ++I)
         for (Register R : AddrRegs) {
-          BuildMI(MBB, Where, DL, TII->get(AArch64::HBNG_SEND))
+          BuildMI(MBB, Where, DL, TII->get(sendOpcode(R)))
               .addReg(Page)
               .addReg(R);
           ++NumPreRASends;
@@ -330,7 +315,7 @@ MachineInstr *AArch64HBNGCheckSends::repairFromWindow(MachineInstr &MI,
   for (MachineInstr *S : llvm::reverse(Window)) {
     if (Used.count(S))
       continue;
-    Register Q = S->getOperand(1).getReg();
+    Register Q = getHBNGSendPseudoRegs(*S)[0];
     // Not a send a later access still pairs with.
     if (Avail.lookup(Q) == S && neededLater(MI, Q))
       continue;
@@ -358,6 +343,7 @@ MachineInstr *AArch64HBNGCheckSends::repairFromWindow(MachineInstr &MI,
 
     if (Avail.lookup(Q) == S)
       Avail.erase(Q); // it no longer sends Q
+    S->setDesc(TII->get(AArch64::HBNG_SEND)); // R is an X register
     S->getOperand(1).setReg(R);
     S->getOperand(1).setIsKill(false); // MI reads R after it
     return S;

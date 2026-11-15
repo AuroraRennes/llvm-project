@@ -12002,6 +12002,11 @@ def HBNG_ATOM_LABEL : Pseudo<(outs), (ins), []>, Sched<[]>;
 let isPseudo = 1, hasSideEffects = 1, mayStore = 1, mayLoad = 0, Size = 4 in
 def HBNG_SEND : Pseudo<(outs), (ins GPR64common:$page, GPR64all:$a), []>,
                 Sched<[WriteST]>;
+// The same for a W register $a (a register offset), stored as its X register:
+// the annotation reads only the low half.
+let isPseudo = 1, hasSideEffects = 1, mayStore = 1, mayLoad = 0, Size = 4 in
+def HBNG_SEND_W : Pseudo<(outs), (ins GPR64common:$page, GPR32all:$a), []>,
+                  Sched<[WriteST]>;
 
 include "AArch64InstrAtomics.td"
 include "AArch64SVEInstrInfo.td"

@@ -48,6 +48,20 @@ define i64 @woffset(ptr %p, i32 %i) {
   ret i64 %v
 }
 
+; A W register offset truncated from a live 64-bit register: that register
+; is sent, with no copy of the offset into another one.
+; CHECK-LABEL: trunc_index:
+; CHECK-NOT:   mov w
+; CHECK:       str x1, {{\[}}[[P:x[0-9]+]]{{\]}}
+; CHECK-NEXT:  str x2, [{{x[0-9]+}}, w1, sxtw #3]
+define i64 @trunc_index(ptr %p, i64 %n, i64 %v) {
+  %i = trunc i64 %n to i32
+  %q = getelementptr i64, ptr %p, i32 %i
+  store i64 %v, ptr %q
+  %r = add i64 %n, 1
+  ret i64 %r
+}
+
 ; An atomic expanded before instruction selection: the load-exclusive's send
 ; before it, the store-exclusive's right after it, no store between the two
 ; exclusives.
