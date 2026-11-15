@@ -61,6 +61,8 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/PseudoSourceValue.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 
@@ -69,6 +71,11 @@ using namespace llvm;
 // The channel symbol the sends store to, page aligned (the store has no
 // :lo12: offset).
 static constexpr const char *HBNGChannelSymbol = "__hbng_chan";
+
+static cl::opt<bool> ReportFallbacks(
+    "hbng-prera-report", cl::Hidden, cl::init(false),
+    cl::desc("With -hbng-prera-sends: print one line per fallback send to "
+             "stderr (HBNG-FALLBACK, function, cause, page, instruction)"));
 
 // Before register allocation.
 STATISTIC(NumPreRASends, "Sends inserted before register allocation");
@@ -279,6 +286,22 @@ enum class Cause {
   SPWrite,
   FPWrite
 };
+
+const char *causeName(Cause C) {
+  switch (C) {
+  case Cause::PrologEpilog: return "prolog-epilog";
+  case Cause::Exclusive: return "exclusive";
+  case Cause::PairWB: return "pair-writeback";
+  case Cause::GlobalAddr: return "global-addr";
+  case Cause::Frame: return "frame";
+  case Cause::Other: return "other";
+  case Cause::RegChanged: return "reg-changed";
+  case Cause::Redefined: return "redefined";
+  case Cause::SPWrite: return "sp-write";
+  case Cause::FPWrite: return "fp-write";
+  }
+  llvm_unreachable("HBNG: unknown cause");
+}
 
 void countCause(Cause C) {
   switch (C) {
@@ -574,9 +597,10 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
   // The page: a register still holding it (not written since, nor by MI when
   // sending after it), else a free one, else one saved on the stack.
   Register Page;
-  bool Spill = false;
+  bool Reused = false, Spill = false;
   if (KnownPage && !(After && MI.modifiesRegister(KnownPage, TRI))) {
     Page = KnownPage;
+    Reused = true;
     ++NumFbPageReused;
     // Its last use may have killed it.
     for (auto I = Where; I != MBB.begin();) {
@@ -641,6 +665,17 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
                         .addImm(16));
   else
     KnownPage = Page;
+
+  if (ReportFallbacks) {
+    std::string Text;
+    raw_string_ostream OS(Text);
+    MI.print(OS, /*IsStandalone=*/true, /*SkipOpers=*/false,
+             /*SkipDebugLoc=*/true, /*AddNewLine=*/false);
+    errs() << "HBNG-FALLBACK\t" << MBB.getParent()->getName() << "\t"
+           << causeName(C) << "\t"
+           << (Reused ? "reused" : Spill ? "spill" : "scratch") << "\t"
+           << StringRef(Text).trim() << "\n";
+  }
 }
 
 // Two adjacent sends through the same page register become one pair: the

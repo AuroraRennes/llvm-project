@@ -6,6 +6,7 @@
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=-lse -hbng -hbng-prera-sends -O2 -verify-machineinstrs < %s | FileCheck %s
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=-lse -hbng -hbng-prera-sends -O2 < %s | FileCheck %s --check-prefix=ANNOT
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=-lse -hbng -hbng-prera-sends -O0 < %s | FileCheck %s --check-prefix=O0
+; RUN: llc -mtriple=aarch64-linux-musl -mattr=-lse -hbng -hbng-prera-sends -hbng-prera-report -O2 -o /dev/null < %s 2>&1 | FileCheck %s --check-prefix=REPORT
 
 ; One load: the page once, then the base, before the load.
 ; CHECK-LABEL: load:
@@ -110,6 +111,7 @@ define i32 @stlxr(ptr %p, i64 %v) {
 ; ANNOT-LABEL: HBNG_frame_annot:
 ; ANNOT:       .ascii "send X29\n"
 ; ANNOT-NEXT:  .ascii "<FP> <- <X29>\n"
+; REPORT:      HBNG-FALLBACK{{[[:space:]]}}frame{{[[:space:]]}}fp-write{{[[:space:]]}}scratch{{[[:space:]]}}$fp, $lr = frame-destroy LDPXi
 declare void @g(ptr)
 define void @frame() "frame-pointer"="all" {
   %a = alloca i64
