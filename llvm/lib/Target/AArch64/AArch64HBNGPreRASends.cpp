@@ -31,7 +31,9 @@
 //   new value of FP, the send right after its write). Where not, it inserts a
 //   fallback send. A fallback needs a register for the page: one still
 //   holding it from a send of the block, else a free register (an adrp of
-//   the page), else a register saved on the stack around the send.
+//   the page), else a register saved on the stack around the send. Then the
+//   sends nothing pairs with are removed (their access is gone or uses other
+//   registers).
 //
 // The sends stay pseudos until emission (AArch64AsmPrinter), so the scheduler
 // and the load/store optimizer leave them in place (side effects) and the
@@ -67,6 +69,8 @@ STATISTIC(NumPreRASends, "Sends inserted before register allocation");
 STATISTIC(NumPreRAPages, "Channel page adrps inserted before register "
                          "allocation");
 // Fallbacks: one event per access, registers apart.
+// After: what became of them.
+STATISTIC(NumSendsRemoved, "Pre-RA sends nothing pairs with, removed");
 STATISTIC(NumFallbacks, "Fallback events (accesses sent after RA)");
 STATISTIC(NumFallbackRegs, "Registers sent by fallbacks");
 STATISTIC(NumFbPageReused, "Fallbacks through a register still holding the "
@@ -229,7 +233,7 @@ class AArch64HBNGCheckSends : public MachineFunctionPass {
   // each register, its nearest preceding send, if no instruction wrote the
   // register since.
   DenseMap<Register, MachineInstr *> Avail;
-  // The sends some value pairs with.
+  // The sends some value pairs with (the others are removed).
   SmallPtrSet<MachineInstr *, 16> Used;
   SmallPtrSet<MachineInstr *, 16> Inserted; // by fallbacks: not checked
   // A register holding the channel page, from a send or an adrp of the block.
@@ -459,7 +463,8 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
 // of Xn in the block (the annotation pass's: a machine block, also ended
 // after a call or an svc) that no instruction in between writes, else, for a
 // store-exclusive, the nearest following one. The pass checks each in
-// program order and inserts the missing sends (fallbacks).
+// program order, inserts the missing sends (fallbacks), then removes the
+// sends nothing pairs with.
 bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
   if (MF.getFunction().hasFnAttribute("hbng_no_instr"))
     return false;
@@ -520,6 +525,14 @@ bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
       if (endsAnnotationBlock(MI))
         Avail.clear();
     }
+
+    // The sends nothing pairs with: their access is gone, or uses other
+    // registers.
+    for (MachineInstr &MI : make_early_inc_range(MBB))
+      if (isHBNGSendPseudo(MI) && !Used.count(&MI)) {
+        MI.eraseFromParent();
+        ++NumSendsRemoved;
+      }
 
     for (MachineInstr &MI : MBB) {
       if (isHBNGSendPseudo(MI)) {
