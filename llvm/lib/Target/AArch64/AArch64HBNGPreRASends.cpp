@@ -28,12 +28,13 @@
 //   annotation refers to must pair with a send: the nearest preceding send of
 //   that physical register in the same block, not written between the send
 //   and the access (for a store-exclusive, the nearest following one; for a
-//   new value of FP, the send right after its write). Where not, it inserts a
-//   fallback send. A fallback needs a register for the page: one still
-//   holding it from a send of the block, else a free register (an adrp of
-//   the page), else a register saved on the stack around the send. Then the
-//   sends nothing pairs with are removed (their access is gone or uses other
-//   registers).
+//   new value of FP, the send right after its write). Where not, a send since
+//   the previous access that nothing pairs with is given the missing register
+//   instead, else it inserts a fallback send. A fallback needs a register for
+//   the page: one still holding it from a send of the block, else a free
+//   register (an adrp of the page), else a register saved on the stack around
+//   the send. Then the sends nothing pairs with are removed (their access is
+//   gone or uses other registers).
 //
 // The sends stay pseudos until emission (AArch64AsmPrinter), so the scheduler
 // and the load/store optimizer leave them in place (side effects) and the
@@ -71,6 +72,8 @@ STATISTIC(NumPreRAPages, "Channel page adrps inserted before register "
 // Fallbacks: one event per access, registers apart.
 // After: what became of them.
 STATISTIC(NumSendsRemoved, "Pre-RA sends nothing pairs with, removed");
+STATISTIC(NumSendsRepaired, "Pre-RA sends nothing paired with, given a "
+                            "missing register instead (no fallback)");
 STATISTIC(NumFallbacks, "Fallback events (accesses sent after RA)");
 STATISTIC(NumFallbackRegs, "Registers sent by fallbacks");
 STATISTIC(NumFbPageReused, "Fallbacks through a register still holding the "
@@ -236,6 +239,8 @@ class AArch64HBNGCheckSends : public MachineFunctionPass {
   // The sends some value pairs with (the others are removed).
   SmallPtrSet<MachineInstr *, 16> Used;
   SmallPtrSet<MachineInstr *, 16> Inserted; // by fallbacks: not checked
+  // The sends since the previous access that expects some.
+  SmallVector<MachineInstr *, 4> Window;
   // A register holding the channel page, from a send or an adrp of the block.
   Register KnownPage;
 
@@ -243,6 +248,8 @@ class AArch64HBNGCheckSends : public MachineFunctionPass {
                                         const HBNGMemAccess &A) const;
   void noteWrites(const MachineInstr &MI);
   void noteSend(MachineInstr &Send);
+  bool neededLater(MachineInstr &MI, Register Q) const;
+  MachineInstr *repairFromWindow(MachineInstr &MI, Register R);
   void checkBefore(MachineInstr &MI, ArrayRef<Register> Regs);
   void checkAfter(MachineInstr &MI, ArrayRef<Register> Regs);
   MachineBasicBlock::iterator afterOwnSends(MachineInstr &MI);
@@ -295,24 +302,99 @@ void AArch64HBNGCheckSends::noteSend(MachineInstr &Send) {
   for (Register R : getHBNGSendPseudoRegs(Send))
     Avail[R] = &Send;
   KnownPage = Send.getOperand(0).getReg();
+  Window.push_back(&Send);
+}
+
+// Whether an access after MI, in the same annotation block and before any
+// write of Q, expects a send of Q.
+bool AArch64HBNGCheckSends::neededLater(MachineInstr &MI, Register Q) const {
+  for (auto I = std::next(MI.getIterator()); I != MI.getParent()->end(); ++I) {
+    if (std::optional<HBNGMemAccess> A = getHBNGMemAccess(*I))
+      if (llvm::is_contained(addressSends(*I, *A), Q))
+        return true;
+    if (I->modifiesRegister(Q, TRI) || endsAnnotationBlock(*I))
+      return false;
+  }
+  return false;
+}
+
+// R is missing before MI, but the window may hold a send nothing pairs with
+// (the allocator gave its access another register, e.g. the copy the
+// two-address pass inserts for the tied base of a write-back access). It is
+// given R instead, at no cost: in place if nothing writes R between it and
+// MI, else moved right after the last such write (if the page register is
+// not written in between).
+MachineInstr *AArch64HBNGCheckSends::repairFromWindow(MachineInstr &MI,
+                                                      Register R) {
+  MachineBasicBlock &MBB = *MI.getParent();
+  for (MachineInstr *S : llvm::reverse(Window)) {
+    if (Used.count(S))
+      continue;
+    Register Q = S->getOperand(1).getReg();
+    // Not a send a later access still pairs with.
+    if (Avail.lookup(Q) == S && neededLater(MI, Q))
+      continue;
+
+    auto AfterS = std::next(MachineBasicBlock::iterator(S));
+    MachineBasicBlock::iterator LastDef = MBB.end();
+    for (auto I = AfterS; I != MI.getIterator(); ++I)
+      if (R != AArch64::XZR && I->modifiesRegister(R, TRI))
+        LastDef = I;
+    if (LastDef != MBB.end()) {
+      Register Page = S->getOperand(0).getReg();
+      auto Moved = make_range(AfterS, std::next(LastDef));
+      if (llvm::any_of(Moved, [&](const MachineInstr &J) {
+            return J.modifiesRegister(Page, TRI);
+          }))
+        continue;
+      // The send now reads the page after these uses: none may kill it.
+      for (MachineInstr &J : Moved)
+        for (MachineOperand &MO : J.operands())
+          if (MO.isReg() && MO.isUse() && MO.getReg() == Page)
+            MO.setIsKill(false);
+      MBB.splice(std::next(LastDef), &MBB, S->getIterator());
+      S->getOperand(0).setIsKill(false);
+    }
+
+    if (Avail.lookup(Q) == S)
+      Avail.erase(Q); // it no longer sends Q
+    S->getOperand(1).setReg(R);
+    S->getOperand(1).setIsKill(false); // MI reads R after it
+    return S;
+  }
+  return nullptr;
 }
 
 // MI's values pair with the nearest preceding send of each register, which
-// no instruction in between writes; a fallback sends the missing ones right
-// before MI.
+// no instruction in between writes; a send of the window nothing pairs with
+// is given a missing one, and a fallback sends the others right before MI.
 void AArch64HBNGCheckSends::checkBefore(MachineInstr &MI,
                                         ArrayRef<Register> Regs) {
   if (Regs.empty())
     return;
-  SmallVector<Register, 4> Missing;
+  // The sends there first, so that a repair does not take one of them.
+  SmallVector<Register, 4> Absent;
   for (Register R : Regs) {
     if (MachineInstr *S = Avail.lookup(R))
+      Used.insert(S);
+    else
+      Absent.push_back(R);
+  }
+  SmallVector<Register, 4> Missing;
+  for (Register R : Absent) {
+    MachineInstr *S = Avail.lookup(R); // repaired for an earlier copy of R
+    if (!S && (S = repairFromWindow(MI, R))) {
+      ++NumSendsRepaired;
+      Avail[R] = S;
+    }
+    if (S)
       Used.insert(S);
     else
       Missing.push_back(R);
   }
   if (!Missing.empty())
     insertFallback(*MI.getParent(), MI.getIterator(), MI, Missing);
+  Window.clear();
 }
 
 // The point after the sends that follow MI and pair with it (a
@@ -366,6 +448,7 @@ void AArch64HBNGCheckSends::checkAfter(MachineInstr &MI,
         MO.setIsKill(false);
     insertFallback(MBB, afterOwnSends(MI), MI, Missing);
   }
+  Window.clear();
 }
 
 // Sends Regs at Where through a register holding the page, marks them used
@@ -463,8 +546,8 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
 // of Xn in the block (the annotation pass's: a machine block, also ended
 // after a call or an svc) that no instruction in between writes, else, for a
 // store-exclusive, the nearest following one. The pass checks each in
-// program order, inserts the missing sends (fallbacks), then removes the
-// sends nothing pairs with.
+// program order, gives a missing register to a send nothing pairs with or
+// inserts a fallback, then removes the sends nothing pairs with.
 bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
   if (MF.getFunction().hasFnAttribute("hbng_no_instr"))
     return false;
@@ -480,6 +563,7 @@ bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
     Avail.clear();
     Used.clear();
     Inserted.clear();
+    Window.clear();
     KnownPage = Register();
     // What a fallback inserts after MI may or may not be visited: it is
     // skipped, insertFallback notes it.
@@ -522,8 +606,10 @@ bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
       if (isChannelPage(MI))
         KnownPage = MI.getOperand(0).getReg();
 
-      if (endsAnnotationBlock(MI))
+      if (endsAnnotationBlock(MI)) {
         Avail.clear();
+        Window.clear();
+      }
     }
 
     // The sends nothing pairs with: their access is gone, or uses other

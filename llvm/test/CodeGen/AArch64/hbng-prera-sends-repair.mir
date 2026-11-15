@@ -1,0 +1,64 @@
+# RUN: llc -mtriple=aarch64-linux-musl -hbng -hbng-prera-sends -run-pass=hbng-check-sends -verify-machineinstrs -o - %s | FileCheck %s
+
+# A send nothing pairs with, before an access missing a register, is given
+# that register instead of a fallback.
+
+# In place: nothing writes x1 between the send and the load.
+# CHECK-LABEL: name: in_place
+# CHECK:      $x8 = ADRP target-flags(aarch64-page) &__hbng_chan
+# CHECK-NEXT: HBNG_SEND $x8, $x1
+# CHECK-NEXT: $x0 = LDRXui $x1, 0
+# CHECK-NOT:  HBNG_SEND
+# CHECK-NOT:  ADRP
+---
+name: in_place
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x1, $x2, $lr
+    $x8 = ADRP target-flags(aarch64-page) &__hbng_chan
+    HBNG_SEND $x8, $x2
+    $x0 = LDRXui $x1, 0
+    RET undef $lr, implicit $x0
+...
+
+# Moved after the write of x1 (a copy of the base sent).
+# CHECK-LABEL: name: moved
+# CHECK:      $x8 = ADRP target-flags(aarch64-page) &__hbng_chan
+# CHECK-NEXT: $x1 = ORRXrs $xzr, $x2, 0
+# CHECK-NEXT: HBNG_SEND $x8, $x1
+# CHECK-NEXT: $x0 = LDRXui $x1, 0
+# CHECK-NOT:  HBNG_SEND
+---
+name: moved
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x2, $lr
+    $x8 = ADRP target-flags(aarch64-page) &__hbng_chan
+    HBNG_SEND $x8, $x2
+    $x1 = ORRXrs $xzr, $x2, 0
+    $x0 = LDRXui $x1, 0
+    RET undef $lr, implicit $x0
+...
+
+# Not taken: a later load pairs with the send of x2. x1 gets a fallback,
+# through the page register.
+# CHECK-LABEL: name: needed_later
+# CHECK:      $x8 = ADRP target-flags(aarch64-page) &__hbng_chan
+# CHECK-NEXT: HBNG_SEND $x8, $x2
+# CHECK-NEXT: HBNG_SEND $x8, $x1
+# CHECK-NEXT: $x0 = LDRXui $x1, 0
+# CHECK-NEXT: $x3 = LDRXui $x2, 0
+---
+name: needed_later
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x1, $x2, $lr
+    $x8 = ADRP target-flags(aarch64-page) &__hbng_chan
+    HBNG_SEND $x8, $x2
+    $x0 = LDRXui $x1, 0
+    $x3 = LDRXui $x2, 0
+    RET undef $lr, implicit $x0, implicit $x3
+...
