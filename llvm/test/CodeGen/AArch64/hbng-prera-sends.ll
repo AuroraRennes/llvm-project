@@ -19,13 +19,12 @@ define i64 @load(ptr %p) {
   ret i64 %v
 }
 
-; Each store has its send, right before it, through the same page.
+; Two stores through the same base: one send, before the first (the base is
+; not written in between). Nothing separates the stores, which become a pair.
 ; CHECK-LABEL: pair:
 ; CHECK:       adrp [[P:x[0-9]+]], __hbng_chan
 ; CHECK-NEXT:  str x0, {{\[}}[[P]]{{\]}}
-; CHECK-NEXT:  str x1, [x0]
-; CHECK-NEXT:  str x0, {{\[}}[[P]]{{\]}}
-; CHECK-NEXT:  str x2, [x0, #8]
+; CHECK-NEXT:  stp x1, x2, [x0]
 define void @pair(ptr %p, i64 %a, i64 %b) {
   store i64 %a, ptr %p
   %q = getelementptr i64, ptr %p, i64 1
@@ -75,19 +74,29 @@ define i128 @ldp(ptr %p) "target-features"="+lse2" {
 }
 
 ; An atomic expanded before instruction selection: the load-exclusive's send
-; before it, the store-exclusive's right after it, no store between the two
-; exclusives.
+; before it, which the store-exclusive also pairs with (same base), no store
+; between the two exclusives.
 ; CHECK-LABEL: fetch_add:
 ; CHECK:       adrp [[P:x[0-9]+]], __hbng_chan
 ; CHECK:       str [[B:x[0-9]+]], {{\[}}[[P]]{{\]}}
 ; CHECK-NEXT:  ldaxr {{x[0-9]+}}, {{\[}}[[B]]{{\]}}
 ; CHECK-NOT:   str
 ; CHECK:       stlxr [[S:w[0-9]+]], {{x[0-9]+}}, {{\[}}[[B]]{{\]}}
-; CHECK-NEXT:  str [[B]], {{\[}}[[P]]{{\]}}
 ; CHECK-NEXT:  cbnz [[S]]
 define i64 @fetch_add(ptr %p, i64 %v) {
   %r = atomicrmw add ptr %p, i64 %v seq_cst
   ret i64 %r
+}
+
+; A store-exclusive whose base is not sent before it sends it right after
+; itself.
+; CHECK-LABEL: stlxr:
+; CHECK:       adrp [[P:x[0-9]+]], __hbng_chan
+; CHECK:       stlxr {{w[0-9]+}}, x1, {{\[}}[[B:x[0-9]+]]{{\]}}
+; CHECK-NEXT:  str [[B]], {{\[}}[[P]]{{\]}}
+define i32 @stlxr(ptr %p, i64 %v) {
+  %s = call i32 @llvm.aarch64.stlxr.p0(i64 %v, ptr elementtype(i64) %p)
+  ret i32 %s
 }
 
 ; The epilogue's reload of FP is sent after it (a fallback, through a free

@@ -19,8 +19,9 @@
 //
 // - AArch64HBNGPreRASends, at the end of addPreRegAlloc: before every access
 //   the annotation pass will describe (after a store-exclusive), one
-//   HBNG_SEND per address register its annotation refers to, through the
-//   page defined once at the function's entry.
+//   HBNG_SEND per address register its annotation refers to and that the
+//   annotation block has not sent yet, through the page defined once at the
+//   function's entry.
 //
 // - AArch64HBNGCheckSends, after register allocation, the post-RA load/store
 //   optimizer, scheduling and the prologue and epilogue: for every access
@@ -49,6 +50,7 @@
 #include "AArch64Subtarget.h"
 #include "Utils/AArch64BaseInfo.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
@@ -68,6 +70,9 @@ static constexpr const char *HBNGChannelSymbol = "__hbng_chan";
 
 // Before register allocation.
 STATISTIC(NumPreRASends, "Sends inserted before register allocation");
+STATISTIC(NumPreRAAlreadySent, "Registers not sent again before register "
+                               "allocation (sent earlier in the annotation "
+                               "block)");
 STATISTIC(NumPreRAPages, "Channel page adrps inserted before register "
                          "allocation");
 // Fallbacks: one event per access, registers apart.
@@ -166,7 +171,13 @@ bool AArch64HBNGPreRASends::runOnMachineFunction(MachineFunction &MF) {
 
   bool Changed = false;
   for (MachineBasicBlock &MBB : MF) {
+    // The virtual registers sent since the start of the annotation block. A
+    // virtual register is written once (machine SSA): its send still carries
+    // its value at any later access of the block.
+    SmallSet<Register, 16> Sent;
     for (MachineInstr &MI : make_early_inc_range(MBB)) {
+      if (endsAnnotationBlock(MI))
+        Sent.clear();
       std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI, /*PreRA=*/true);
       if (!A)
         continue;
@@ -183,6 +194,12 @@ bool AArch64HBNGPreRASends::runOnMachineFunction(MachineFunction &MF) {
         AddrRegs.push_back(BaseMO.getReg());
       if (A->isRegOffset())
         AddrRegs.push_back(MI.getOperand(A->Offset).getReg());
+      llvm::erase_if(AddrRegs, [&](Register R) {
+        if (!R.isVirtual() || Sent.insert(R).second)
+          return false;
+        ++NumPreRAAlreadySent;
+        return true;
+      });
       if (AddrRegs.empty())
         continue;
 
