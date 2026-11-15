@@ -43,11 +43,10 @@ body: |
 ...
 
 # Not taken: a later load pairs with the send of x2. x1 gets a fallback,
-# through the page register.
+# through the page register (the two adjacent sends then form a pair).
 # CHECK-LABEL: name: needed_later
 # CHECK:      $x8 = ADRP target-flags(aarch64-page) &__hbng_chan
-# CHECK-NEXT: HBNG_SEND $x8, $x2
-# CHECK-NEXT: HBNG_SEND $x8, $x1
+# CHECK-NEXT: HBNG_SEND_PAIR $x8, $x2, $x1
 # CHECK-NEXT: $x0 = LDRXui $x1, 0
 # CHECK-NEXT: $x3 = LDRXui $x2, 0
 ---

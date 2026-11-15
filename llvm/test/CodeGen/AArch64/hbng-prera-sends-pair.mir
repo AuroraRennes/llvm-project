@@ -1,0 +1,38 @@
+# RUN: llc -mtriple=aarch64-linux-musl -hbng -hbng-prera-sends -run-pass=hbng-check-sends -verify-machineinstrs -o - %s | FileCheck %s
+
+# Two adjacent sends through the same page register become one pair, in the
+# order the channel receives them. A W register is paired as its X register.
+# CHECK-LABEL: name: pair
+# CHECK:      $x8 = ADRP target-flags(aarch64-page) &__hbng_chan
+# CHECK-NEXT: HBNG_SEND_PAIR $x8, $x1, $x2
+# CHECK-NEXT: $x0 = LDRXroW $x1, $w2, 1, 1
+---
+name: pair
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x1, $w2, $lr
+    $x8 = ADRP target-flags(aarch64-page) &__hbng_chan
+    HBNG_SEND $x8, $x1
+    HBNG_SEND_W $x8, $w2
+    $x0 = LDRXroW $x1, $w2, 1, 1
+    RET undef $lr, implicit $x0
+...
+
+# Not through the same page register: no pair.
+# CHECK-LABEL: name: two_pages
+# CHECK:      HBNG_SEND $x8, $x1
+# CHECK-NEXT: HBNG_SEND $x9, $x2
+---
+name: two_pages
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x1, $x2, $lr
+    $x8 = ADRP target-flags(aarch64-page) &__hbng_chan
+    $x9 = ADRP target-flags(aarch64-page) &__hbng_chan
+    HBNG_SEND $x8, $x1
+    HBNG_SEND $x9, $x2
+    $x0 = LDRXroX $x1, $x2, 0, 1
+    RET undef $lr, implicit $x0
+...

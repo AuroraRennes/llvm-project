@@ -34,7 +34,8 @@
 //   the page: one still holding it from a send of the block, else a free
 //   register (an adrp of the page), else a register saved on the stack around
 //   the send. Then the sends nothing pairs with are removed (their access is
-//   gone or uses other registers).
+//   gone or uses other registers), and two adjacent sends through the same
+//   page register become one pair (an stp).
 //
 // The sends stay pseudos until emission (AArch64AsmPrinter), so the scheduler
 // and the load/store optimizer leave them in place (side effects) and the
@@ -81,7 +82,8 @@ STATISTIC(NumFbPageReused, "Fallbacks through a register still holding the "
 STATISTIC(NumFbPageScratch, "Fallbacks through a free register (adrp)");
 STATISTIC(NumFbSpills, "Fallbacks through a register saved on the stack");
 // The final code.
-STATISTIC(NumFinalSendInstrs, "Send instructions emitted");
+STATISTIC(NumFinalSendInstrs, "Send instructions (str and stp) emitted");
+STATISTIC(NumFinalSendPairs, "Send pairs (stp) emitted");
 STATISTIC(NumFinalSentRegs, "Registers sent in the final code");
 STATISTIC(NumFinalPages, "Channel page adrps in the final code");
 
@@ -240,6 +242,7 @@ class AArch64HBNGCheckSends : public MachineFunctionPass {
   MachineBasicBlock::iterator afterOwnSends(MachineInstr &MI);
   void insertFallback(MachineBasicBlock &MBB, MachineBasicBlock::iterator Where,
                       const MachineInstr &MI, ArrayRef<Register> Regs);
+  void formPairs(MachineBasicBlock &MBB);
 
 public:
   static char ID;
@@ -527,13 +530,37 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
     KnownPage = Page;
 }
 
+// Two adjacent sends through the same page register become one pair: the
+// same values, received in the same order, in one store.
+void AArch64HBNGCheckSends::formPairs(MachineBasicBlock &MBB) {
+  for (auto I = MBB.begin(); I != MBB.end();) {
+    MachineInstr &First = *I++;
+    if (!isHBNGSendPseudo(First) || I == MBB.end() || !isHBNGSendPseudo(*I) ||
+        I->getOperand(0).getReg() != First.getOperand(0).getReg())
+      continue;
+    MachineInstr &Second = *I++;
+    // A W register send (HBNG_SEND_W) is paired as its X register.
+    Register A = getHBNGSendPseudoRegs(First)[0];
+    Register B = getHBNGSendPseudoRegs(Second)[0];
+    BuildMI(MBB, First.getIterator(), First.getDebugLoc(),
+            TII->get(AArch64::HBNG_SEND_PAIR))
+        .addReg(First.getOperand(0).getReg(),
+                getKillRegState(Second.getOperand(0).isKill()))
+        .addReg(A, getKillRegState(First.getOperand(1).isKill()))
+        .addReg(B, getKillRegState(Second.getOperand(1).isKill()));
+    First.eraseFromParent();
+    Second.eraseFromParent();
+  }
+}
+
 // Every value an annotation refers to (<Xn>, an address register, a source
 // of SP, a new value of FP) must pair with a send: the nearest preceding send
 // of Xn in the block (the annotation pass's: a machine block, also ended
 // after a call or an svc) that no instruction in between writes, else, for a
 // store-exclusive, the nearest following one. The pass checks each in
 // program order, gives a missing register to a send nothing pairs with or
-// inserts a fallback, then removes the sends nothing pairs with.
+// inserts a fallback, then removes the sends nothing pairs with and forms the
+// pairs.
 bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
   if (MF.getFunction().hasFnAttribute("hbng_no_instr"))
     return false;
@@ -606,9 +633,13 @@ bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
         ++NumSendsRemoved;
       }
 
+    formPairs(MBB);
+
     for (MachineInstr &MI : MBB) {
       if (isHBNGSendPseudo(MI)) {
         ++NumFinalSendInstrs;
+        if (MI.getOpcode() == AArch64::HBNG_SEND_PAIR)
+          ++NumFinalSendPairs;
         NumFinalSentRegs += getHBNGSendPseudoRegs(MI).size();
       } else if (isChannelPage(MI)) {
         ++NumFinalPages;

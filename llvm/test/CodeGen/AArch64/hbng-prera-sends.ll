@@ -33,15 +33,16 @@ define void @pair(ptr %p, i64 %a, i64 %b) {
   ret void
 }
 
-; A W register offset is sent as its X register, after the base.
+; A W register offset is sent as its X register, after the base. The two
+; adjacent sends are one pair, the base at the higher address (received
+; first).
 ; CHECK-LABEL: woffset:
 ; CHECK:       adrp [[P:x[0-9]+]], __hbng_chan
-; CHECK:       str x0, {{\[}}[[P]]{{\]}}
-; CHECK-NEXT:  str x1, {{\[}}[[P]]{{\]}}
+; CHECK-NEXT:  stp x1, x0, {{\[}}[[P]]{{\]}}
 ; CHECK-NEXT:  ldr x0, [x0, w1, sxtw #3]
 ; ANNOT-LABEL: HBNG_woffset_annot:
 ; ANNOT:       .ascii "send X0\n"
-; ANNOT:       .ascii "send X1\n"
+; ANNOT-NEXT:  .ascii "send X1\n"
 define i64 @woffset(ptr %p, i32 %i) {
   %q = getelementptr i64, ptr %p, i32 %i
   %v = load i64, ptr %q
