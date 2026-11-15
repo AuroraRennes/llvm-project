@@ -1173,7 +1173,7 @@ std::vector<std::string> AArch64HBNGAnnotate::genVecMemAnnotation(
 // and the STM emits the higher address first: "send b", then "send a".
 // FP is never sent as an address (it is tracked): a send of x29 follows a
 // write of FP whose value the annotations cannot compute, and gives it.
-// A send pseudo (HBNG_SEND) sends its one register.
+// A send pseudo sends its register, or a pair its two, in its order.
 std::vector<std::string> AArch64HBNGAnnotate::genSendLines(MachineInstr &MI) {
   SmallVector<Register, 2> Regs;
   if (isHBNGSendPseudo(MI)) {
