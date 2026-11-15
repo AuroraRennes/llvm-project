@@ -12007,6 +12007,13 @@ def HBNG_SEND : Pseudo<(outs), (ins GPR64common:$page, GPR64all:$a), []>,
 let isPseudo = 1, hasSideEffects = 1, mayStore = 1, mayLoad = 0, Size = 4 in
 def HBNG_SEND_W : Pseudo<(outs), (ins GPR64common:$page, GPR32all:$a), []>,
                   Sched<[WriteST]>;
+// Two sends in one store: $a then $b, emitted as "stp $b, $a" (the channel
+// receives the higher address first). Formed after register allocation from
+// two adjacent sends through the same page register.
+let isPseudo = 1, hasSideEffects = 1, mayStore = 1, mayLoad = 0, Size = 4 in
+def HBNG_SEND_PAIR : Pseudo<(outs),
+                            (ins GPR64common:$page, GPR64all:$a, GPR64all:$b),
+                            []>, Sched<[WriteSTP]>;
 
 include "AArch64InstrAtomics.td"
 include "AArch64SVEInstrInfo.td"
