@@ -186,14 +186,15 @@ bool AArch64HBNGPreRASends::runOnMachineFunction(MachineFunction &MF) {
       if (AddrRegs.empty())
         continue;
 
+      // One send per register, even for a pair access: all the values of a
+      // register pair with its nearest send.
       Register Page = getPage(MF);
-      for (unsigned I = 0; I < A->NumData; ++I)
-        for (Register R : AddrRegs) {
-          BuildMI(MBB, Where, DL, TII->get(sendOpcode(R)))
-              .addReg(Page)
-              .addReg(R);
-          ++NumPreRASends;
-        }
+      for (Register R : AddrRegs) {
+        BuildMI(MBB, Where, DL, TII->get(sendOpcode(R)))
+            .addReg(Page)
+            .addReg(R);
+        ++NumPreRASends;
+      }
       Changed = true;
     }
   }
@@ -255,12 +256,11 @@ public:
 
 char AArch64HBNGCheckSends::ID = 0;
 
-// The registers the annotation of MI refers to, one send each per data
-// register.
+// The registers the annotation of MI refers to.
 SmallVector<Register, 4>
 AArch64HBNGCheckSends::addressSends(const MachineInstr &MI,
                                     const HBNGMemAccess &A) const {
-  SmallVector<Register, 2> AddrRegs;
+  SmallVector<Register, 4> AddrRegs;
   Register Base = MI.getOperand(A.Base).getReg();
   if (!isHBNGTrackedReg(Base))
     AddrRegs.push_back(Base);
@@ -271,10 +271,7 @@ AArch64HBNGCheckSends::addressSends(const MachineInstr &MI,
                                      &AArch64::GPR64RegClass);
     AddrRegs.push_back(Off);
   }
-  SmallVector<Register, 4> Sends;
-  for (unsigned I = 0; I < A.NumData; ++I)
-    Sends.append(AddrRegs.begin(), AddrRegs.end());
-  return Sends;
+  return AddrRegs;
 }
 
 // The sends of the registers MI writes no longer pair with a later value.

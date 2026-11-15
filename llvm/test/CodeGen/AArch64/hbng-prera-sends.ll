@@ -63,6 +63,17 @@ define i64 @trunc_index(ptr %p, i64 %n, i64 %v) {
   ret i64 %r
 }
 
+; A pair access refers to its base once per data register, but all pair with
+; one send.
+; CHECK-LABEL: ldp:
+; CHECK:       adrp [[P:x[0-9]+]], __hbng_chan
+; CHECK-NEXT:  str x0, {{\[}}[[P]]{{\]}}
+; CHECK-NEXT:  ldp x0, x1, [x0]
+define i128 @ldp(ptr %p) "target-features"="+lse2" {
+  %v = load atomic i128, ptr %p monotonic, align 16
+  ret i128 %v
+}
+
 ; An atomic expanded before instruction selection: the load-exclusive's send
 ; before it, the store-exclusive's right after it, no store between the two
 ; exclusives.

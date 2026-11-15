@@ -1,0 +1,18 @@
+# RUN: llc -mtriple=aarch64-linux-musl -hbng -hbng-prera-sends -run-pass=hbng-check-sends -verify-machineinstrs -o - %s | FileCheck %s
+
+# A pair access with no send: one fallback send of its base, which both
+# values pair with.
+# CHECK-LABEL: name: pair_access
+# CHECK:      $x9 = ADRP target-flags(aarch64-page) &__hbng_chan
+# CHECK-NEXT: HBNG_SEND $x9, $x0
+# CHECK-NEXT: $x2, $x3 = LDPXi $x0, 0
+---
+name: pair_access
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x0, $lr
+    $x2, $x3 = LDPXi $x0, 0
+    $x0 = ADDXrr $x2, $x3
+    RET undef $lr, implicit $x0
+...
