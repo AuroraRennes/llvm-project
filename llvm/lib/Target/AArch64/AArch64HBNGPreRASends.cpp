@@ -31,7 +31,8 @@
 //   and the access (for a store-exclusive, the nearest following one; for a
 //   new value of FP, the send right after its write). Where not, a send since
 //   the previous access that nothing pairs with is given the missing register
-//   instead, else it inserts a fallback send. A fallback needs a register for
+//   instead, else it inserts a fallback send, counted by cause. A fallback
+//   needs a register for
 //   the page: one still holding it from a send of the block, else a free
 //   register (an adrp of the page), else a register saved on the stack around
 //   the send. Then the sends nothing pairs with are removed (their access is
@@ -59,6 +60,7 @@
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/PseudoSourceValue.h"
 
 using namespace llvm;
 
@@ -86,6 +88,22 @@ STATISTIC(NumFbPageReused, "Fallbacks through a register still holding the "
                            "page");
 STATISTIC(NumFbPageScratch, "Fallbacks through a free register (adrp)");
 STATISTIC(NumFbSpills, "Fallbacks through a register saved on the stack");
+// Why: no send was placed for the access (by kind of access), or sends were
+// placed but for other registers, or the register was written since its send.
+STATISTIC(NumFbPrologEpilog, "Fallback cause: prologue or epilogue access");
+STATISTIC(NumFbExclusive, "Fallback cause: exclusive access (atomic expanded "
+                          "after RA)");
+STATISTIC(NumFbPairWB, "Fallback cause: pair or write-back access with no "
+                       "send (load/store optimizer)");
+STATISTIC(NumFbGlobalAddr, "Fallback cause: access to a global or constant "
+                           "pool entry (adrp + :lo12:), rematerialized");
+STATISTIC(NumFbFrame, "Fallback cause: stack object through another base "
+                      "than SP or FP (frame index elimination)");
+STATISTIC(NumFbOther, "Fallback cause: other access with no send");
+STATISTIC(NumFbRegChanged, "Fallback cause: sends there, other registers");
+STATISTIC(NumFbRedefined, "Fallback cause: register written since its send");
+STATISTIC(NumFbSPWrite, "Fallback cause: write of SP from another register");
+STATISTIC(NumFbFPWrite, "Fallback cause: write of FP sent after it");
 // The final code.
 STATISTIC(NumFinalSendInstrs, "Send instructions (str and stp) emitted");
 STATISTIC(NumFinalSendPairs, "Send pairs (stp) emitted");
@@ -108,6 +126,22 @@ bool endsAnnotationBlock(const MachineInstr &MI) {
   return MI.isBranch() || MI.isReturn() || MI.isCall() ||
          (MI.isInlineAsm() &&
           StringRef(MI.getOperand(0).getSymbolName()).contains("svc"));
+}
+
+bool isExclusiveAccess(unsigned Opc) {
+  switch (Opc) {
+  case AArch64::LDXRB: case AArch64::LDXRH: case AArch64::LDXRW:
+  case AArch64::LDXRX: case AArch64::LDAXRB: case AArch64::LDAXRH:
+  case AArch64::LDAXRW: case AArch64::LDAXRX: case AArch64::LDXPW:
+  case AArch64::LDXPX: case AArch64::LDAXPW: case AArch64::LDAXPX:
+  case AArch64::STXRB: case AArch64::STXRH: case AArch64::STXRW:
+  case AArch64::STXRX: case AArch64::STLXRB: case AArch64::STLXRH:
+  case AArch64::STLXRW: case AArch64::STLXRX: case AArch64::STXPW:
+  case AArch64::STXPX: case AArch64::STLXPW: case AArch64::STLXPX:
+    return true;
+  default:
+    return false;
+  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -232,6 +266,55 @@ const MCPhysReg PageRegOrder[] = {
     AArch64::X20, AArch64::X21, AArch64::X22, AArch64::X23, AArch64::X24,
     AArch64::X25, AArch64::X26, AArch64::X27, AArch64::X28, AArch64::LR};
 
+// Why a fallback was needed (statistics).
+enum class Cause {
+  PrologEpilog,
+  Exclusive,
+  PairWB,
+  GlobalAddr,
+  Frame,
+  Other,
+  RegChanged,
+  Redefined,
+  SPWrite,
+  FPWrite
+};
+
+void countCause(Cause C) {
+  switch (C) {
+  case Cause::PrologEpilog: ++NumFbPrologEpilog; break;
+  case Cause::Exclusive: ++NumFbExclusive; break;
+  case Cause::PairWB: ++NumFbPairWB; break;
+  case Cause::GlobalAddr: ++NumFbGlobalAddr; break;
+  case Cause::Frame: ++NumFbFrame; break;
+  case Cause::Other: ++NumFbOther; break;
+  case Cause::RegChanged: ++NumFbRegChanged; break;
+  case Cause::Redefined: ++NumFbRedefined; break;
+  case Cause::SPWrite: ++NumFbSPWrite; break;
+  case Cause::FPWrite: ++NumFbFPWrite; break;
+  }
+}
+
+// The cause of a fallback for an access that had no send placed for it.
+Cause noSendCause(const MachineInstr &MI, const HBNGMemAccess &A) {
+  if (MI.getFlag(MachineInstr::FrameSetup) ||
+      MI.getFlag(MachineInstr::FrameDestroy))
+    return Cause::PrologEpilog;
+  if (isExclusiveAccess(MI.getOpcode()))
+    return Cause::Exclusive;
+  if (A.NumData == 2 || A.hasWriteback())
+    return Cause::PairWB;
+  if (A.Offset >= 0 && !MI.getOperand(A.Offset).isReg() &&
+      !MI.getOperand(A.Offset).isImm())
+    return Cause::GlobalAddr;
+  if (llvm::any_of(MI.memoperands(), [](const MachineMemOperand *MMO) {
+        const PseudoSourceValue *PSV = MMO->getPseudoValue();
+        return PSV && (PSV->isStack() || isa<FixedStackPseudoSourceValue>(PSV));
+      }))
+    return Cause::Frame;
+  return Cause::Other;
+}
+
 class AArch64HBNGCheckSends : public MachineFunctionPass {
   const AArch64InstrInfo *TII = nullptr;
   const TargetRegisterInfo *TRI = nullptr;
@@ -239,7 +322,7 @@ class AArch64HBNGCheckSends : public MachineFunctionPass {
 
   // Per block, in program order (the pairing, see runOnMachineFunction), for
   // each register, its nearest preceding send, if no instruction wrote the
-  // register since.
+  // register since (null if one did).
   DenseMap<Register, MachineInstr *> Avail;
   // The sends some value pairs with (the others are removed).
   SmallPtrSet<MachineInstr *, 16> Used;
@@ -255,11 +338,13 @@ class AArch64HBNGCheckSends : public MachineFunctionPass {
   void noteSend(MachineInstr &Send);
   bool neededLater(MachineInstr &MI, Register Q) const;
   MachineInstr *repairFromWindow(MachineInstr &MI, Register R);
-  void checkBefore(MachineInstr &MI, ArrayRef<Register> Regs);
-  void checkAfter(MachineInstr &MI, ArrayRef<Register> Regs);
+  Cause missingCause(ArrayRef<Register> Missing, Cause NoSend) const;
+  void checkBefore(MachineInstr &MI, ArrayRef<Register> Regs, Cause NoSend);
+  void checkAfter(MachineInstr &MI, ArrayRef<Register> Regs, Cause NoSend);
   MachineBasicBlock::iterator afterOwnSends(MachineInstr &MI);
   void insertFallback(MachineBasicBlock &MBB, MachineBasicBlock::iterator Where,
-                      const MachineInstr &MI, ArrayRef<Register> Regs);
+                      const MachineInstr &MI, ArrayRef<Register> Regs,
+                      Cause C);
   void formPairs(MachineBasicBlock &MBB);
 
 public:
@@ -368,11 +453,22 @@ MachineInstr *AArch64HBNGCheckSends::repairFromWindow(MachineInstr &MI,
   return nullptr;
 }
 
+// Why the Missing registers have no send: one was written since its send,
+// else sends were placed for the access but for other registers, else none
+// was (NoSend).
+Cause AArch64HBNGCheckSends::missingCause(ArrayRef<Register> Missing,
+                                          Cause NoSend) const {
+  if (llvm::any_of(Missing, [&](Register R) { return Avail.contains(R); }))
+    return Cause::Redefined;
+  return Window.empty() ? NoSend : Cause::RegChanged;
+}
+
 // MI's values pair with the nearest preceding send of each register, which
 // no instruction in between writes; a send of the window nothing pairs with
 // is given a missing one, and a fallback sends the others right before MI.
 void AArch64HBNGCheckSends::checkBefore(MachineInstr &MI,
-                                        ArrayRef<Register> Regs) {
+                                        ArrayRef<Register> Regs,
+                                        Cause NoSend) {
   if (Regs.empty())
     return;
   // The sends there first, so that a repair does not take one of them.
@@ -396,7 +492,8 @@ void AArch64HBNGCheckSends::checkBefore(MachineInstr &MI,
       Missing.push_back(R);
   }
   if (!Missing.empty())
-    insertFallback(*MI.getParent(), MI.getIterator(), MI, Missing);
+    insertFallback(*MI.getParent(), MI.getIterator(), MI, Missing,
+                   missingCause(Missing, NoSend));
   Window.clear();
 }
 
@@ -417,7 +514,7 @@ AArch64HBNGCheckSends::afterOwnSends(MachineInstr &MI) {
 // else with a preceding one. A fallback sends the missing ones right after
 // MI.
 void AArch64HBNGCheckSends::checkAfter(MachineInstr &MI,
-                                       ArrayRef<Register> Regs) {
+                                       ArrayRef<Register> Regs, Cause NoSend) {
   if (Regs.empty())
     return;
   MachineBasicBlock &MBB = *MI.getParent();
@@ -449,7 +546,8 @@ void AArch64HBNGCheckSends::checkAfter(MachineInstr &MI,
     for (MachineOperand &MO : MI.operands())
       if (MO.isReg() && MO.isUse() && llvm::is_contained(Missing, MO.getReg()))
         MO.setIsKill(false);
-    insertFallback(MBB, afterOwnSends(MI), MI, Missing);
+    insertFallback(MBB, afterOwnSends(MI), MI, Missing,
+                   missingCause(Missing, NoSend));
   }
   Window.clear();
 }
@@ -459,11 +557,12 @@ void AArch64HBNGCheckSends::checkAfter(MachineInstr &MI,
 void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
                                            MachineBasicBlock::iterator Where,
                                            const MachineInstr &MI,
-                                           ArrayRef<Register> Regs) {
+                                           ArrayRef<Register> Regs, Cause C) {
   const DebugLoc &DL = MI.getDebugLoc();
   bool After = Where != MI.getIterator();
   ++NumFallbacks;
   NumFallbackRegs += Regs.size();
+  countCause(C);
 
   // A register is never chosen for the page if the annotations track it (FP)
   // or it is reserved (SP, or a register reserved with -ffixed-xN).
@@ -521,8 +620,8 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
                                            AArch64II::MO_PAGE));
     // The adrp (and the reload) write the register: its earlier send no
     // longer pairs.
-    if (MachineInstr *&S = Avail[Page])
-      S = nullptr;
+    if (auto It = Avail.find(Page); It != Avail.end())
+      It->second = nullptr;
   }
 
   for (Register R : Regs) {
@@ -609,14 +708,14 @@ bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
         SmallVector<Register, 4> Regs = addressSends(MI, *A);
         // Status >= 0 describes a store-exclusive: it sends after itself.
         if (A->Status >= 0)
-          checkAfter(MI, Regs);
+          checkAfter(MI, Regs, noSendCause(MI, *A));
         else
-          checkBefore(MI, Regs);
+          checkBefore(MI, Regs, noSendCause(MI, *A));
       }
 
       // SP written from a register: the annotation refers to its value.
       if (std::optional<HBNGSPWrite> W = getHBNGSPWrite(MI, TRI))
-        checkBefore(MI, W->Sends);
+        checkBefore(MI, W->Sends, Cause::SPWrite);
 
       noteWrites(MI);
 
@@ -627,7 +726,7 @@ bool AArch64HBNGCheckSends::runOnMachineFunction(MachineFunction &MF) {
       if (isHBNGFPSentAfter(MI, TRI)) {
         assert(!MI.isTerminator() && "HBNG: FP written by a terminator");
         Register FP = AArch64::FP;
-        insertFallback(MBB, afterOwnSends(MI), MI, FP);
+        insertFallback(MBB, afterOwnSends(MI), MI, FP, Cause::FPWrite);
       }
 
       if (isChannelPage(MI))
