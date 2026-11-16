@@ -380,7 +380,8 @@ public:
 
 char AArch64HBNGCheckSends::ID = 0;
 
-// The registers the annotation of MI refers to.
+// The registers the annotation of MI refers to, other than the tracked ones:
+// a register offset allocated to x29 is FP's value, which needs no send.
 SmallVector<Register, 4>
 AArch64HBNGCheckSends::addressSends(const MachineInstr &MI,
                                     const HBNGMemAccess &A) const {
@@ -393,7 +394,8 @@ AArch64HBNGCheckSends::addressSends(const MachineInstr &MI,
     if (A.Mode == HBNGMemAccess::RegOffsetW)
       Off = TRI->getMatchingSuperReg(Off, AArch64::sub_32,
                                      &AArch64::GPR64RegClass);
-    AddrRegs.push_back(Off);
+    if (!isHBNGTrackedReg(Off))
+      AddrRegs.push_back(Off);
   }
   return AddrRegs;
 }

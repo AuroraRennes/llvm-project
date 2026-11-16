@@ -65,9 +65,9 @@ INITIALIZE_PASS(AArch64HBNGSendToSTM, DEBUG_TYPE, "HardBlare-NG Send to STM pass
 // Main insertion function
 
 // Sends, before MI, the address registers each of its annotation lines refers
-// to: the base (unless it is SP or FP, whose values the annotations track, see
-// isHBNGTrackedReg) and the register offset, once per data register (twice for a
-// pair). A W register offset is sent as its X register. The registers are
+// to: the base and the register offset, unless SP or FP (x29), whose values
+// the annotations track (see isHBNGTrackedReg), once per data register (twice
+// for a pair). A W register offset is sent as its X register. The registers are
 // sent two by two with STP, the second one at the lower address, which the STM
 // emits first, or alone with STR.
 //
@@ -92,7 +92,8 @@ void AArch64HBNGSendToSTM::insertStoreForAddressOperand(
         if (A.Mode == HBNGMemAccess::RegOffsetW)
             Off = TRI->getMatchingSuperReg(Off, AArch64::sub_32,
                                            &AArch64::GPR64RegClass);
-        AddrRegs.push_back(Off);
+        if (!isHBNGTrackedReg(Off))
+            AddrRegs.push_back(Off);
     }
 
     SmallVector<Register, 4> Sends;

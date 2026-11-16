@@ -1,0 +1,35 @@
+# RUN: llc -mtriple=aarch64-linux-musl -hbng -hbng-prera-sends -start-before=hbng-check-sends %s -o - | FileCheck %s
+
+# A register offset allocated to x29 is FP's value, which the annotations
+# track: the access pairs with no send of it, so the send before it is
+# removed, and the address reads <FP>.
+# CHECK-LABEL: HBNG_fp_index:
+# CHECK-NEXT:  adrp x8, __hbng_chan
+# CHECK-NEXT:  str x20, [x8]
+# CHECK-NEXT:  ldr x0, [x20, w29, uxtw #3]
+# CHECK-LABEL: HBNG_fp_index_annot:
+# CHECK-NEXT:  .ascii "@0\n"
+# CHECK-NEXT:  .ascii "X8 <- 0\n"
+# CHECK-NEXT:  .ascii "@4\n"
+# CHECK-NEXT:  .ascii "send X20\n"
+# CHECK-NEXT:  .ascii "@8\n"
+# CHECK-NEXT:  .ascii "X0 <- M[<X20> + ext(<FP>, uxtw, 3) .. +8]\n"
+# CHECK-NEXT:  .ascii "@12\n"
+
+--- |
+  target triple = "aarch64-unknown-linux-musl"
+  @__hbng_chan = external global [4096 x i8]
+  define i64 @fp_index(ptr %p) { ret i64 0 }
+...
+---
+name: fp_index
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x20, $w29
+    $x8 = ADRP target-flags(aarch64-page) @__hbng_chan
+    HBNG_SEND $x8, $x20
+    HBNG_SEND_W $x8, $w29
+    $x0 = LDRXroW $x20, $w29, 0, 1
+    RET undef $lr, implicit $x0
+...

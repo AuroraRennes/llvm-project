@@ -217,11 +217,12 @@ std::optional<std::string> AArch64HBNGAnnotate::srcLoc(Register R) {
   return gprLoc(R);
 }
 
-// The value of a register at the instruction's entry.
+// The value of a register at the instruction's entry. W29 is FP's value too
+// (a register offset is read as its W register, extended).
 std::string AArch64HBNGAnnotate::valueOf(Register R) {
   if (R == AArch64::SP || R == AArch64::WSP)
     return "<SP>";
-  if (R == AArch64::FP)
+  if (R == AArch64::FP || R == AArch64::W29)
     return "<FP>";
   return "<X" + std::to_string(TRI->getEncodingValue(R)) + ">";
 }
