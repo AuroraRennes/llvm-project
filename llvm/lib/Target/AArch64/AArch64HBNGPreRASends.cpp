@@ -226,14 +226,18 @@ bool AArch64HBNGPreRASends::runOnMachineFunction(MachineFunction &MF) {
       const DebugLoc &DL = MI.getDebugLoc();
 
       // The base, unless a frame index (it becomes SP or FP, tracked) or a
-      // tracked register; the register offset.
+      // tracked register; the register offset, unless the zero register (the
+      // address is the base alone).
       SmallVector<Register, 2> AddrRegs;
       const MachineOperand &BaseMO = MI.getOperand(A->Base);
       if (BaseMO.isReg() &&
           (BaseMO.getReg().isVirtual() || !isHBNGTrackedReg(BaseMO.getReg())))
         AddrRegs.push_back(BaseMO.getReg());
-      if (A->isRegOffset())
-        AddrRegs.push_back(MI.getOperand(A->Offset).getReg());
+      if (A->isRegOffset()) {
+        Register Off = MI.getOperand(A->Offset).getReg();
+        if (Off != AArch64::XZR && Off != AArch64::WZR)
+          AddrRegs.push_back(Off);
+      }
       llvm::erase_if(AddrRegs, [&](Register R) {
         if (!R.isVirtual() || Sent.insert(R).second)
           return false;
@@ -381,7 +385,8 @@ public:
 char AArch64HBNGCheckSends::ID = 0;
 
 // The registers the annotation of MI refers to, other than the tracked ones:
-// a register offset allocated to x29 is FP's value, which needs no send.
+// a register offset allocated to x29 is FP's value, which needs no send. The
+// zero register as an offset adds nothing to the address: no send either.
 SmallVector<Register, 4>
 AArch64HBNGCheckSends::addressSends(const MachineInstr &MI,
                                     const HBNGMemAccess &A) const {
@@ -394,7 +399,7 @@ AArch64HBNGCheckSends::addressSends(const MachineInstr &MI,
     if (A.Mode == HBNGMemAccess::RegOffsetW)
       Off = TRI->getMatchingSuperReg(Off, AArch64::sub_32,
                                      &AArch64::GPR64RegClass);
-    if (!isHBNGTrackedReg(Off))
+    if (!isHBNGTrackedReg(Off) && Off != AArch64::XZR)
       AddrRegs.push_back(Off);
   }
   return AddrRegs;

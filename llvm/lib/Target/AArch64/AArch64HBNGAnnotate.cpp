@@ -1187,11 +1187,7 @@ std::vector<std::string> AArch64HBNGAnnotate::genSendLines(MachineInstr &MI) {
   std::vector<std::string> Lines;
   bool SendsFP = false;
   for (Register R : Regs) {
-    // The zero register as an offset is sent too: a FIFO entry of 0.
-    Lines.push_back(R == AArch64::XZR
-                        ? std::string("send XZR\n")
-                        : "send X" + std::to_string(TRI->getEncodingValue(R)) +
-                              "\n");
+    Lines.push_back("send X" + std::to_string(TRI->getEncodingValue(R)) + "\n");
     SendsFP |= R == AArch64::FP;
   }
   if (SendsFP)

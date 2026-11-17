@@ -1,18 +1,21 @@
-# The zero register as a register offset: the send pass sends it like any
-# offset register, a FIFO entry of 0 ("send XZR"), and the address is the
-# base alone.
-# RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -start-before=hbng-send-stm %s -o - | FileCheck %s
+# The zero register as a register offset adds nothing to the address, which is
+# the base alone: only the base is sent.
+# RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -start-before=hbng-send-stm %s -o - | FileCheck %s --check-prefixes=CHECK,X18
+# RUN: llc -mtriple=aarch64-linux-musl -hbng -hbng-prera-sends -start-before=hbng-prera-sends-insert %s -o - | FileCheck %s --check-prefixes=CHECK,PRERA
 
 # CHECK-LABEL: HBNG_zero_index:
-# CHECK-NEXT:  stp xzr, x0, [x18]
+# X18-NEXT:    str x0, [x18]
+# PRERA-NEXT:  adrp x8, __hbng_chan
+# PRERA-NEXT:  str x0, [x8]
 # CHECK-NEXT:  str xzr, [x0, xzr, lsl #3]
 # CHECK-LABEL: HBNG_zero_index_annot:
 # CHECK-NEXT:  .ascii "@0\n"
+# PRERA-NEXT:  .ascii "X8 <- 0\n"
+# PRERA-NEXT:  .ascii "@4\n"
 # CHECK-NEXT:  .ascii "send X0\n"
-# CHECK-NEXT:  .ascii "send XZR\n"
-# CHECK-NEXT:  .ascii "@4\n"
+# CHECK-NEXT:  .ascii "@{{4|8}}\n"
 # CHECK-NEXT:  .ascii "M[<X0> .. +8] <- 0\n"
-# CHECK-NEXT:  .ascii "@8\n"
+# CHECK-NEXT:  .ascii "@{{8|12}}\n"
 # CHECK-NEXT:  .ascii "END\n"
 
 --- |
