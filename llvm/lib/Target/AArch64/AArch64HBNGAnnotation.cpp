@@ -1,13 +1,15 @@
 //===-- AArch64HBNGAnnotation.cpp - HBNG annotation structure -------------===//
 //
-// The HBNG annotation structure.
+// The HBNG annotation structure and its text.
 //
 //===----------------------------------------------------------------------===//
 
 #include "AArch64HBNGAnnotation.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/Support/ErrorHandling.h"
 #include <cassert>
+#include <algorithm>
 #include <deque>
 
 using namespace llvm;
@@ -290,4 +292,407 @@ void Transfer::assignMap(ArrayRef<Loc> Dsts,
     if (Map[I])
       Deps[I].Srcs.insert(*Map[I]);
   write(*this, Dsts, std::move(Deps));
+}
+
+//===----------------------------------------------------------------------===//
+// Printing
+//
+// The written locations, sorted, are cut into runs of consecutive ones, each
+// printed in as few statements as the shapes below allow.
+
+namespace {
+using Run = std::vector<Loc>;
+
+class Printer {
+  const TermPool &Pool;
+  std::string &Out;
+
+public:
+  Printer(const TermPool &Pool, std::string &Out) : Pool(Pool), Out(Out) {}
+
+  bool less(const Loc &A, const Loc &B) const {
+    if (A.K != B.K)
+      return A.K < B.K;
+    if (A.K == Loc::Mem)
+      return Pool.less(A.Addr, B.Addr);
+    return std::make_pair(A.N, A.B) < std::make_pair(B.N, B.B);
+  }
+
+  std::vector<Loc> sorted(const LocSet &S) const {
+    std::vector<Loc> R(S.begin(), S.end());
+    std::sort(R.begin(), R.end(),
+              [&](const Loc &A, const Loc &B) { return less(A, B); });
+    return R;
+  }
+
+  static bool follows(const Loc &Prev, const Loc &L, int Dir = 1) {
+    if (Prev.K == Loc::VByte && L.K == Loc::VByte)
+      return Prev.N == L.N && int(L.B) == int(Prev.B) + Dir;
+    if (Prev.K == Loc::Mem && L.K == Loc::Mem && Dir == 1)
+      return Prev.Addr.Sum == L.Addr.Sum &&
+             L.Addr.Const - Prev.Addr.Const == 1;
+    return false;
+  }
+
+  // Runs of consecutive locations in the given order: ascending, or
+  // descending for V bytes.
+  static std::vector<Run> consecutiveRuns(ArrayRef<Loc> Locs) {
+    std::vector<Run> Runs;
+    for (const Loc &L : Locs) {
+      if (!Runs.empty()) {
+        Run &R = Runs.back();
+        int Dir = R.size() > 1 && follows(R[0], R[1], -1) ? -1 : 1;
+        if (follows(R.back(), L, Dir) ||
+            (R.size() == 1 && follows(R.back(), L, -1))) {
+          R.push_back(L);
+          continue;
+        }
+      }
+      Runs.push_back({L});
+    }
+    return Runs;
+  }
+
+  std::string locText(const Loc &L) const {
+    switch (L.K) {
+    case Loc::Reg:
+      return L.N == 31 ? "SP" : L.N == 30 ? "LR" : L.N == 29 ? "FP"
+                                                            : "X" + utostr(L.N);
+    case Loc::VByte:
+      return "V" + utostr(L.N) + "[" + utostr(L.B) + "]";
+    case Loc::Mem:
+      return "M[" + Pool.str(L.Addr) + "]";
+    }
+    llvm_unreachable("HBNG: unknown location");
+  }
+
+  std::string groupText(const Run &R) const {
+    const Loc &First = R.front(), &Last = R.back();
+    if (R.size() == 1)
+      return locText(First);
+    if (First.K == Loc::VByte)
+      return "V" + utostr(First.N) + "[" + utostr(First.B) + ":" +
+             utostr(Last.B) + "]";
+    return "M[" + Pool.str(First.Addr) + " .. +" + utostr(R.size()) + "]";
+  }
+
+  // "0", or the runs of S joined with " | ".
+  std::string unionText(const LocSet &S) const {
+    if (S.empty())
+      return "0";
+    std::string R;
+    for (const Run &Rn : consecutiveRuns(sorted(S)))
+      R += (R.empty() ? "" : " | ") + groupText(Rn);
+    return R;
+  }
+
+  // The same dependency for every location: "V0[0:3] <- X1".
+  void unionLine(ArrayRef<Loc> Dsts, const Dep &D) {
+    Out += groupText(Dsts) + " <- " + unionText(D.Srcs);
+    if (!D.Excl.empty())
+      Out += " excl " + unionText(D.Excl);
+    Out += "\n";
+  }
+
+  // A memory group of Times elements of Size bytes, Step apart, listing
+  // exactly Seq.
+  std::optional<std::string> stridedMemGroup(ArrayRef<Loc> Seq) const {
+    size_t Size = 1;
+    while (Size < Seq.size() && follows(Seq[Size - 1], Seq[Size]))
+      ++Size;
+    if (Size == Seq.size())
+      return groupText(Seq);
+    u64 Step = Seq[Size].Addr.Const - Seq[0].Addr.Const;
+    if (Seq[Size].Addr.Sum != Seq[0].Addr.Sum || Seq.size() % Size ||
+        Step >= (u64(1) << 32))
+      return std::nullopt;
+    size_t Times = Seq.size() / Size;
+    for (size_t I = 0; I < Times; ++I)
+      for (size_t K = 0; K < Size; ++K) {
+        const Loc &L = Seq[I * Size + K];
+        if (L.Addr.Sum != Seq[0].Addr.Sum ||
+            L.Addr.Const != Seq[0].Addr.Const + I * Step + K)
+          return std::nullopt;
+      }
+    return "M[" + Pool.str(Seq[0].Addr) + " .. +" + utostr(Size) +
+           " step " + utostr(Step) + " times " + utostr(Times) + "]";
+  }
+
+  // The group that lists exactly Seq, in order: a register, a V range or a
+  // (strided) memory group.
+  std::optional<std::string> groupFor(ArrayRef<Loc> Seq) const {
+    bool All = true;
+    for (size_t I = 1; I < Seq.size(); ++I)
+      All &= follows(Seq[I - 1], Seq[I]);
+    if (All)
+      return Seq[0].K == Loc::Reg && Seq.size() > 1
+                 ? std::nullopt
+                 : std::optional<std::string>(groupText(Seq));
+    for (const Loc &L : Seq)
+      if (L.K != Loc::Mem)
+        return std::nullopt;
+    return stridedMemGroup(Seq);
+  }
+
+  // A part as text: the same locations for every element (a union), or
+  // element i made of the i-th element of each group ("per In:Out").
+  std::optional<std::string> perPart(ArrayRef<const LocSet *> Sets,
+                                     unsigned EOut) const {
+    bool Same = true;
+    for (const LocSet *S : Sets)
+      Same &= *S == *Sets[0];
+    if (Same)
+      return unionText(*Sets[0]);
+    std::vector<std::vector<Run>> Runs;
+    for (const LocSet *S : Sets)
+      Runs.push_back(consecutiveRuns(sorted(*S)));
+    if (Runs[0].empty())
+      return std::nullopt;
+    size_t EIn = Runs[0][0].size();
+    for (const auto &Element : Runs) {
+      if (Element.size() != Runs[0].size())
+        return std::nullopt;
+      for (const Run &R : Element)
+        if (R.size() != EIn)
+          return std::nullopt;
+    }
+    std::string R;
+    for (size_t J = 0; J < Runs[0].size(); ++J) {
+      std::vector<Loc> Seq;
+      for (const auto &Element : Runs)
+        Seq.insert(Seq.end(), Element[J].begin(), Element[J].end());
+      std::optional<std::string> G = groupFor(Seq);
+      if (!G)
+        return std::nullopt;
+      R += (R.empty() ? "" : " | ") + *G;
+    }
+    R += " per " + utostr(EIn);
+    if (EOut != EIn)
+      R += ":" + utostr(EOut);
+    return R;
+  }
+
+  // Element i from element i of each source: "V0[0:15] <- V1[0:15] |
+  // V2[0:15] per 4".
+  bool perLine(ArrayRef<Loc> R, ArrayRef<const Dep *> Deps) {
+    for (unsigned EOut : {1u, 2u, 4u, 8u}) {
+      size_t Count = R.size() / EOut;
+      if (R.size() % EOut || Count < 2)
+        continue;
+      bool Uniform = true;
+      for (size_t I = 0; I < R.size() && Uniform; ++I)
+        Uniform = *Deps[I] == *Deps[I / EOut * EOut];
+      if (!Uniform)
+        continue;
+      std::vector<const LocSet *> Srcs, Excl;
+      for (size_t I = 0; I < Count; ++I) {
+        Srcs.push_back(&Deps[I * EOut]->Srcs);
+        Excl.push_back(&Deps[I * EOut]->Excl);
+      }
+      std::optional<std::string> S = perPart(Srcs, EOut);
+      std::optional<std::string> E = perPart(Excl, EOut);
+      if (S && E) {
+        Out += groupText(R) + " <- " + *S +
+               (*E == "0" ? "" : " excl " + *E) + "\n";
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static bool isClear(const Dep *D) {
+    return D->Srcs.empty() && D->Excl.empty();
+  }
+
+  // Location i of R from the single V byte of Deps[i], or none (0):
+  // "V0[0:15] <- [V1[3:15] V2[0:2]]".
+  bool byteMapLine(ArrayRef<Loc> R, ArrayRef<const Dep *> Deps) {
+    for (const Dep *D : Deps)
+      if (D->Srcs.size() > 1 || !D->Excl.empty() ||
+          (D->Srcs.size() == 1 && D->Srcs.begin()->K != Loc::VByte))
+        return false;
+    std::string Items;
+    std::vector<Loc> Pending;
+    auto Flush = [&] {
+      for (const Run &Rn : consecutiveRuns(Pending))
+        Items += (Items.empty() ? "" : " ") + groupText(Rn);
+      Pending.clear();
+    };
+    for (const Dep *D : Deps) {
+      if (!D->Srcs.empty()) {
+        Pending.push_back(*D->Srcs.begin());
+        continue;
+      }
+      Flush();
+      Items += (Items.empty() ? "" : " ") + std::string("0");
+    }
+    Flush();
+    Out += groupText(R) + " <- [" + Items + "]\n";
+    return true;
+  }
+
+  // The clear top of a whole V register from byte 1, 2, 4 or 8, on its own
+  // line below the rest.
+  bool clearTop(ArrayRef<Loc> R, ArrayRef<const Dep *> Deps) {
+    if (R[0].K != Loc::VByte || R.size() != 16)
+      return false;
+    for (size_t K : {1, 2, 4, 8}) {
+      if (!all_of(Deps.drop_front(K), isClear))
+        continue;
+      if (all_of(Deps.take_front(K), isClear))
+        return false;
+      runLines(R.take_front(K), Deps.take_front(K));
+      unionLine(R.drop_front(K), *Deps[K]);
+      return true;
+    }
+    return false;
+  }
+
+  // Memory written from bytes of several V registers, one byte each: a line
+  // per register, each listing its bytes in order, by the address of their
+  // first byte.
+  bool perRegister(ArrayRef<Loc> R, ArrayRef<const Dep *> Deps) {
+    if (R[0].K != Loc::Mem)
+      return false;
+    std::map<unsigned, std::vector<std::pair<Loc, Loc>>> ByReg; // V, dst, src
+    std::vector<unsigned> Order;
+    for (size_t I = 0; I < R.size(); ++I) {
+      const Dep *D = Deps[I];
+      if (D->Srcs.size() != 1 || D->Srcs.begin()->K != Loc::VByte ||
+          !D->Excl.empty())
+        return false;
+      const Loc &S = *D->Srcs.begin();
+      if (!ByReg.count(S.N))
+        Order.push_back(S.N);
+      ByReg[S.N].push_back({R[I], S});
+    }
+    if (Order.size() < 2)
+      return false;
+    std::vector<std::string> Lines;
+    for (unsigned N : Order) {
+      auto &Bytes = ByReg[N];
+      std::stable_sort(Bytes.begin(), Bytes.end(),
+                       [](const auto &A, const auto &B) {
+                         return A.second.B < B.second.B;
+                       });
+      std::vector<Loc> Dsts, Srcs;
+      for (const auto &[D, S] : Bytes) {
+        Dsts.push_back(D);
+        Srcs.push_back(S);
+      }
+      std::optional<std::string> To = groupFor(Dsts), From = groupFor(Srcs);
+      if (!To || !From)
+        return false;
+      Lines.push_back(*To + " <- " + *From + " per 1\n");
+    }
+    for (const std::string &L : Lines)
+      Out += L;
+    return true;
+  }
+
+  // The registers (and memory bases) a dependency reads.
+  static std::set<std::pair<unsigned, unsigned>> sources(const Dep *D) {
+    std::set<std::pair<unsigned, unsigned>> R;
+    for (const LocSet *S : {&D->Srcs, &D->Excl})
+      for (const Loc &L : *S)
+        R.insert({L.K, L.K == Loc::Mem ? L.Addr.Sum : L.N});
+    return R;
+  }
+
+  // The run cut where the registers read change, when it gives several
+  // parts.
+  bool bySource(ArrayRef<Loc> R, ArrayRef<const Dep *> Deps) {
+    std::vector<size_t> Cuts;
+    for (size_t I = 1; I < R.size(); ++I)
+      if (sources(Deps[I]) != sources(Deps[I - 1]))
+        Cuts.push_back(I);
+    if (Cuts.empty())
+      return false;
+    Cuts.push_back(R.size());
+    size_t Start = 0;
+    for (size_t End : Cuts) {
+      runLines(R.slice(Start, End - Start), Deps.slice(Start, End - Start));
+      Start = End;
+    }
+    return true;
+  }
+
+  // The statements of the run R: one line when a shape fits the whole run,
+  // otherwise the run cut further.
+  void runLines(ArrayRef<Loc> R, ArrayRef<const Dep *> Deps) {
+    if (all_of(Deps, [&](const Dep *D) { return *D == *Deps[0]; }))
+      return unionLine(R, *Deps[0]);
+    if (perLine(R, Deps) || clearTop(R, Deps) || perRegister(R, Deps) ||
+        (R[0].K == Loc::VByte && byteMapLine(R, Deps)) || bySource(R, Deps))
+      return;
+    // Runs of equal dependencies, or of single sources that follow each other
+    // as their locations do.
+    auto Single = [&](size_t I) {
+      return Deps[I]->Srcs.size() == 1 && Deps[I]->Excl.empty();
+    };
+    auto Next = [&](size_t I) {
+      return Single(I - 1) && Single(I) &&
+             follows(*Deps[I - 1]->Srcs.begin(), *Deps[I]->Srcs.begin());
+    };
+    size_t Start = 0;
+    for (size_t I = 1; I <= R.size(); ++I) {
+      bool Equal = *Deps[I - 1] == *Deps[Start];
+      if (I < R.size() && (I - Start == 1 ? *Deps[I] == *Deps[Start] || Next(I)
+                                          : Equal ? *Deps[I] == *Deps[Start]
+                                                  : Next(I)))
+        continue;
+      ArrayRef<Loc> Dsts = R.slice(Start, I - Start);
+      if (Equal) {
+        unionLine(Dsts, *Deps[Start]);
+      } else {
+        LocSet Srcs;
+        for (size_t K = Start; K < I; ++K)
+          Srcs.insert(*Deps[K]->Srcs.begin());
+        Out += groupText(Dsts) + " <- " + unionText(Srcs) + " per 1\n";
+      }
+      Start = I;
+    }
+  }
+
+  // The sends, the tag statements (memory, then X registers and SP, then V
+  // bytes), the tracked values, the opaque statement.
+  void print(const Transfer &T) {
+    for (uint8_t N : T.Sends)
+      Out += "send X" + utostr(N) + "\n";
+    std::vector<std::pair<Loc, const Dep *>> Written;
+    for (const auto &[L, D] : T.Deps)
+      Written.push_back({L, &D});
+    std::sort(Written.begin(), Written.end(),
+              [&](const auto &A, const auto &B) {
+                return less(A.first, B.first);
+              });
+    for (size_t Start = 0, I = 1; I <= Written.size(); ++I)
+      if (I == Written.size() ||
+          !follows(Written[I - 1].first, Written[I].first)) {
+        std::vector<Loc> R;
+        std::vector<const Dep *> Deps;
+        for (size_t K = Start; K < I; ++K) {
+          R.push_back(Written[K].first);
+          Deps.push_back(Written[K].second);
+        }
+        runLines(R, Deps);
+        Start = I;
+      }
+    if (T.SP)
+      Out += "<SP> <- " + Pool.str(*T.SP) + "\n";
+    if (T.FP)
+      Out += "<FP> <- " + Pool.str(*T.FP) + "\n";
+    if (T.Opaque == Transfer::Svc)
+      Out += "svc\n";
+    else if (T.Opaque == Transfer::Unsupported)
+      Out += "unsupported \"" + T.Reason + "\"\n";
+  }
+};
+} // namespace
+
+std::string llvm::hbng::printTransfer(const TermPool &Pool,
+                                      const Transfer &T) {
+  std::string Out;
+  Printer(Pool, Out).print(T);
+  return Out;
 }

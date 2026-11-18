@@ -173,6 +173,9 @@ struct Transfer {
   }
 };
 
+// The statements of a transfer, one per line ("...\n" each).
+std::string printTransfer(const TermPool &Pool, const Transfer &T);
+
 } // namespace hbng
 } // namespace llvm
 
