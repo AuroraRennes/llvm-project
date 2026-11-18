@@ -99,6 +99,7 @@ add_llvm_target(AArch64CodeGen
   AArch64PrologueEpilogue.cpp
 
   AArch64HBNGAnnotate.cpp
+  AArch64HBNGAnnotation.cpp
   AArch64HBNGSendToSTM.cpp
   AArch64HBNGPreRASends.cpp
 
