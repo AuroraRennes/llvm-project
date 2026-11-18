@@ -1,12 +1,13 @@
 //===-- AArch64HBNGAnnotation.cpp - HBNG annotation structure -------------===//
 //
-// The terms of the HBNG annotations.
+// The HBNG annotation structure.
 //
 //===----------------------------------------------------------------------===//
 
 #include "AArch64HBNGAnnotation.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
+#include <cassert>
 #include <deque>
 
 using namespace llvm;
@@ -207,4 +208,86 @@ bool TermPool::less(Term A, Term B) const {
   if (A.Sum != B.Sum)
     return P->Sums[A.Sum].Key < P->Sums[B.Sum].Key;
   return int64_t(A.Const) < int64_t(B.Const);
+}
+
+//===----------------------------------------------------------------------===//
+// Locations and transfers
+
+LocList llvm::hbng::vBytes(unsigned N, unsigned Lo, unsigned Len) {
+  LocList R;
+  for (unsigned B = Lo; B < Lo + Len; ++B)
+    R.push_back(Loc::v(N, B));
+  return R;
+}
+
+LocList llvm::hbng::memBytes(TermPool &Pool, Term A, unsigned Size,
+                             unsigned Step, unsigned Times) {
+  LocList R;
+  for (unsigned I = 0; I < Times; ++I)
+    for (unsigned K = 0; K < Size; ++K)
+      R.push_back(Loc::mem(Pool.plus(A, int64_t(I) * Step + K)));
+  return R;
+}
+
+static bool isIdentity(const Loc &L, const Dep &D) {
+  return D.Srcs.size() == 1 && *D.Srcs.begin() == L && D.Excl.empty();
+}
+
+// Writes Deps[i] to Dsts[i]; nothing when each location would keep its own
+// tag.
+static void write(Transfer &T, ArrayRef<Loc> Dsts, std::vector<Dep> Deps) {
+  bool Changes = false;
+  for (size_t I = 0; I < Dsts.size(); ++I)
+    Changes |= !isIdentity(Dsts[I], Deps[I]);
+  if (!Changes)
+    return;
+  for (size_t I = 0; I < Dsts.size(); ++I) {
+    [[maybe_unused]] bool New =
+        T.Deps.emplace(Dsts[I], std::move(Deps[I])).second;
+    assert(New && "HBNG: a location written twice");
+  }
+}
+
+void Transfer::assign(ArrayRef<Loc> Dsts, ArrayRef<Loc> Srcs,
+                      ArrayRef<Loc> Excl) {
+  Dep D;
+  D.Srcs.insert(Srcs.begin(), Srcs.end());
+  D.Excl.insert(Excl.begin(), Excl.end());
+  write(*this, Dsts, std::vector<Dep>(Dsts.size(), D));
+}
+
+// Element i of Dsts (Out locations each) from element i (In locations each)
+// of each group.
+static std::vector<LocSet> perElement(size_t Dsts,
+                                      ArrayRef<ArrayRef<Loc>> Groups,
+                                      unsigned In, unsigned Out) {
+  std::vector<LocSet> R(Dsts);
+  for (size_t I = 0; I < Dsts; ++I)
+    for (ArrayRef<Loc> G : Groups) {
+      ArrayRef<Loc> E = G.slice(I / Out * In, In);
+      R[I].insert(E.begin(), E.end());
+    }
+  return R;
+}
+
+void Transfer::assignPer(ArrayRef<Loc> Dsts, ArrayRef<ArrayRef<Loc>> Srcs,
+                         unsigned In, unsigned Out,
+                         ArrayRef<ArrayRef<Loc>> Excl) {
+  std::vector<LocSet> S = perElement(Dsts.size(), Srcs, In, Out);
+  std::vector<LocSet> E = perElement(Dsts.size(), Excl, In, Out);
+  std::vector<Dep> Deps(Dsts.size());
+  for (size_t I = 0; I < Dsts.size(); ++I) {
+    Deps[I].Srcs = std::move(S[I]);
+    Deps[I].Excl = std::move(E[I]);
+  }
+  write(*this, Dsts, std::move(Deps));
+}
+
+void Transfer::assignMap(ArrayRef<Loc> Dsts,
+                         ArrayRef<std::optional<Loc>> Map) {
+  std::vector<Dep> Deps(Dsts.size());
+  for (size_t I = 0; I < Dsts.size(); ++I)
+    if (Map[I])
+      Deps[I].Srcs.insert(*Map[I]);
+  write(*this, Dsts, std::move(Deps));
 }
