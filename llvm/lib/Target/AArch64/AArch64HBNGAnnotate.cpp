@@ -1,9 +1,11 @@
 #include "AArch64.h"
 #include "AArch64HBNGAnnotation.h"
+#include "AArch64HBNGBlockForms.h"
 #include "AArch64HBNGMemAccess.h"
 #include "AArch64InstrInfo.h"
 #include "AArch64MachineFunctionInfo.h"
 #include "AArch64Subtarget.h"
+#include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -15,6 +17,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCContext.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -24,6 +27,13 @@
 using namespace llvm;
 
 #define DEBUG_TYPE "hbng-annotate"
+
+STATISTIC(NumBlockFormFallbacks,
+          "Blocks left per instruction: a register read has no send");
+
+static cl::opt<bool> BlockForms(
+    "hbng-block-forms", cl::Hidden, cl::init(false),
+    cl::desc("Annotate each block as forms, runs of instructions composed"));
 
 //===----------------------------------------------------------------------===//
 // Helper generator functions
@@ -1762,20 +1772,32 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
       Close();
     }
 
-    // A block's text: for each instruction, "@<offset>" then its statements;
-    // then END. A block with no instruction (only pseudos that emit nothing)
+    // A block's text: for each instruction (or each form, with block forms),
+    // "@<offset>" then its statements; then END. A block with no instruction (only pseudos that emit nothing)
     // has no text, and the block table leaves it out (see
     // emitHBNGBasicBlockTableSection).
+    std::optional<hbng::BlockForms> Composer;
+    if (BlockForms)
+      Composer.emplace(Terms);
     for (const auto &[Index, Groups] : Blocks) {
       std::vector<std::string> &Text = FI->BBAnnotationInfos[Index].Annotations;
-      for (size_t I = 0; I < Groups.size(); ++I) {
-        Text.push_back("@" + std::to_string(4 * I) + "\n");
-        std::string Statements = hbng::printTransfer(Terms, Groups[I].T);
+      auto Print = [&](unsigned Offset, const hbng::Transfer &T) {
+        Text.push_back("@" + std::to_string(Offset) + "\n");
+        std::string Statements = hbng::printTransfer(Terms, T);
         SmallVector<StringRef, 8> Lines;
         StringRef(Statements).split(Lines, '\n', -1, false);
         for (StringRef Line : Lines)
           Text.push_back((Line + "\n").str());
-      }
+      };
+      std::optional<std::vector<hbng::Form>> Forms;
+      if (Composer && !Groups.empty() && !(Forms = Composer->compose(Groups)))
+        ++NumBlockFormFallbacks;
+      if (Forms)
+        for (const hbng::Form &F : *Forms)
+          Print(F.Offset, F.T);
+      else
+        for (size_t I = 0; I < Groups.size(); ++I)
+          Print(4 * I, Groups[I].T);
       if (!Groups.empty())
         Text.push_back("END\n");
     }
