@@ -1651,6 +1651,10 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
     AArch64FunctionInfo *FI = MF.getInfo<AArch64FunctionInfo>();
 
     LLVM_DEBUG(dbgs() << "func: " << MF.getName() << "\n");
+    // Each block's transfers, one per instruction, with the block's index in
+    // BBAnnotationInfos. Nothing is printed before the whole function is
+    // built, so that later steps can work across its blocks.
+    std::vector<std::pair<size_t, std::vector<hbng::Transfer>>> Blocks;
     for (auto &MBB : MF) {
       LLVM_DEBUG(dbgs() << "bblock: " << MBB.getName() << "\n");
       // Get the symbol of the basic block
@@ -1672,16 +1676,12 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
 
 
       unsigned SplitIndex = 0;
-      // The byte offset of the next instruction in the current block.
-      unsigned Offset = 0;
-      // A block's text is its groups, "@<offset>" and the statements of the
-      // instruction at that offset, closed by END. A block with no
-      // instruction (only pseudos that emit nothing) has no text: the block
-      // table leaves it out (see emitHBNGBasicBlockTableSection).
+      // The current block's transfers, one per instruction.
+      std::vector<hbng::Transfer> Groups;
       auto Close = [&] {
-        if (Offset)
-          BBAnnotationInfo.Annotations.push_back("END\n");
-        BBAnnotationInfo.NumInstrs = Offset / 4;
+        BBAnnotationInfo.NumInstrs = Groups.size();
+        Blocks.push_back({FI->BBAnnotationInfos.size(), std::move(Groups)});
+        Groups.clear();
         FI->BBAnnotationInfos.push_back(BBAnnotationInfo);
       };
 
@@ -1691,17 +1691,10 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
         StringRef Mnemonic = TII->getName(Opcode);
         LLVM_DEBUG(dbgs() << "instr: " << Mnemonic << "\n");
         for (hbng::Transfer &T : generateGroups(MI)) {
-          BBAnnotationInfo.Annotations.push_back("@" + std::to_string(Offset) +
-                                                 "\n");
-          std::string Statements = hbng::printTransfer(Terms, T);
-          SmallVector<StringRef, 8> Lines;
-          StringRef(Statements).split(Lines, '\n', -1, false);
-          for (StringRef Line : Lines)
-            BBAnnotationInfo.Annotations.push_back((Line + "\n").str());
           // One channel entry per send, at this group's index.
           for (size_t I = 0; I < T.Sends.size(); ++I)
-            BBAnnotationInfo.SendIndices.push_back(Offset / 4);
-          Offset += 4;
+            BBAnnotationInfo.SendIndices.push_back(Groups.size());
+          Groups.push_back(std::move(T));
         }
 
         // Check if the current instruction is a branch/return/call etc. but the
@@ -1733,7 +1726,6 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
           BBAnnotationInfo.Annotations = {};
           BBAnnotationInfo.NumInstrs = 0;
           BBAnnotationInfo.SendIndices.clear();
-          Offset = 0;
 
           LLVM_DEBUG(dbgs() << "Splitting the block, resetting info with: " << SplitBBSym->getName() << " and " << SplitAnnotSym->getName() << "\n");
         }
@@ -1745,6 +1737,23 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
       Close();
     }
 
+    // A block's text: for each instruction, "@<offset>" then its statements;
+    // then END. A block with no instruction (only pseudos that emit nothing)
+    // has no text, and the block table leaves it out (see
+    // emitHBNGBasicBlockTableSection).
+    for (const auto &[Index, Groups] : Blocks) {
+      std::vector<std::string> &Text = FI->BBAnnotationInfos[Index].Annotations;
+      for (size_t I = 0; I < Groups.size(); ++I) {
+        Text.push_back("@" + std::to_string(4 * I) + "\n");
+        std::string Statements = hbng::printTransfer(Terms, Groups[I]);
+        SmallVector<StringRef, 8> Lines;
+        StringRef(Statements).split(Lines, '\n', -1, false);
+        for (StringRef Line : Lines)
+          Text.push_back((Line + "\n").str());
+      }
+      if (!Groups.empty())
+        Text.push_back("END\n");
+    }
     Terms.clear();
     // Notify if the content has changed
     return false;
