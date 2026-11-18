@@ -9,21 +9,21 @@
 ; shl d0, d0, #3
 ; CHECK-LABEL: HBNG_shld_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] per 8\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7]\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; ssra d0, d1, #5
 ; CHECK-LABEL: HBNG_ssrad_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:7] per 8\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:7]\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; sli d0, d1, #7
 ; CHECK-LABEL: HBNG_slid_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:7] per 8\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:7]\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
@@ -33,7 +33,7 @@
 ; CHECK-NEXT:  .ascii "V0[0:7] <- X0\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] per 8\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7]\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "X0 <- V0[0:7]\n"
@@ -45,7 +45,7 @@
 ; CHECK-NEXT:  .ascii "V0[0:7] <- X0\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "V0[0:3] <- V0[0:7] per 8:4\n"
+; CHECK-NEXT:  .ascii "V0[0:3] <- V0[0:7]\n"
 ; CHECK-NEXT:  .ascii "V0[4:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "X0 <- V0[0:3]\n"
@@ -57,14 +57,14 @@
 ; CHECK-NEXT:  .ascii "V0[0:7] <- X0\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] per 8\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7]\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fcvtzs d0, d0, #3 ; fmov x0, d0
 ; CHECK-LABEL: HBNG_fcvtzsd_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] per 8\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7]\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "X0 <- V0[0:7]\n"

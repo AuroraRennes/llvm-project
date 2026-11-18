@@ -24,13 +24,13 @@
 ; CHECK-NEXT:  .ascii "V1[0:7] <- X0\n"
 ; CHECK-NEXT:  .ascii "V1[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@8\n"
-; CHECK-NEXT:  .ascii "V0[0:15] <- V1[0:7] | V0[0:7] per 8:16\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:7] | V1[0:7]\n"
 ; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; pmull2 v0.1q, v0.2d, v1.2d
 ; CHECK-LABEL: HBNG_pmull2_64_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:15] <- V0[8:15] | V1[8:15] per 8:16\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- V0[8:15] | V1[8:15]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 

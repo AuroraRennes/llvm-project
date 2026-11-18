@@ -15,7 +15,7 @@
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "send X8\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "M[<X0> + ext(<X8>, uxtx, 3) .. +8] <- X8\n"
+; CHECK-NEXT:  .ascii "M[<X0> + 8*<X8> .. +8] <- X8\n"
 
 define void @loop(ptr %p, i64 %n) {
 entry:

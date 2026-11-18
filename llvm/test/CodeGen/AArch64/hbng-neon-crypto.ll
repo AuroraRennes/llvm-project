@@ -41,7 +41,7 @@
 ; CHECK-NEXT:  .ascii "V2[0:3] <- X0\n"
 ; CHECK-NEXT:  .ascii "V2[4:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:15] | V2[0:3] | V1[0:15]\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:15] | V1[0:15] | V2[0:3]\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; sha1su0 v0.4s, v1.4s, v2.4s

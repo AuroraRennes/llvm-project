@@ -73,7 +73,7 @@
 ; saddl v0.8h, v1.8b, v0.8b
 ; CHECK-LABEL: HBNG_saddl_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:15] <- V1[0:7] | V0[0:7] per 1:2\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:7] | V1[0:7] per 1:2\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; xtn v0.8b, v0.8h

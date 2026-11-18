@@ -9,13 +9,13 @@
 ; add v0.4s, v1.4s, v0.4s
 ; CHECK-LABEL: HBNG_add4_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:15] <- V1[0:15] | V0[0:15] per 4\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:15] | V1[0:15] per 4\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; add v0.8b, v1.8b, v0.8b
 ; CHECK-LABEL: HBNG_add8b_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V1[0:7] | V0[0:7] per 1\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:7] per 1\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
@@ -29,14 +29,14 @@
 ; add d0, d1, d0
 ; CHECK-LABEL: HBNG_add1d_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V1[0:7] | V0[0:7] per 8\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:7]\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; mls v0.2s, v2.2s, v1.2s
 ; CHECK-LABEL: HBNG_mls_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V2[0:7] | V1[0:7] per 4\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:7] | V2[0:7] per 4\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"

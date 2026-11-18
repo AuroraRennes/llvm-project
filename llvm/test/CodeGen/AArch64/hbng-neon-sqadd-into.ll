@@ -25,7 +25,7 @@
 ; CHECK-NEXT:  .ascii "V1[0:7] <- X0\n"
 ; CHECK-NEXT:  .ascii "V1[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@8\n"
-; CHECK-NEXT:  .ascii "V1[0:7] <- V1[0:7] | V0[0:7] per 8\n"
+; CHECK-NEXT:  .ascii "V1[0:7] <- V0[0:7] | V1[0:7]\n"
 ; CHECK-NEXT:  .ascii "V1[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@12\n"
 ; CHECK-NEXT:  .ascii "X0 <- V1[0:7]\n"

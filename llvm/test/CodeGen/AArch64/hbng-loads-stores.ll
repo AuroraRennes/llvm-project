@@ -45,7 +45,7 @@
 ; ANNOT-NEXT:  .ascii "send X0\n"
 ; ANNOT-NEXT:  .ascii "send X1\n"
 ; ANNOT-NEXT:  .ascii "@4\n"
-; ANNOT-NEXT:  .ascii "X0 <- M[<X0> + ext(<X1>, uxtx, 3) .. +8]\n"
+; ANNOT-NEXT:  .ascii "X0 <- M[<X0> + 8*<X1> .. +8]\n"
 ; ANNOT-LABEL: HBNG_reg_w_annot:
 ; ANNOT-NEXT:  .ascii "@0\n"
 ; ANNOT-NEXT:  .ascii "send X0\n"

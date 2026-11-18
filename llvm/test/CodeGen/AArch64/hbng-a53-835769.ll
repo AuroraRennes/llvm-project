@@ -10,7 +10,7 @@
 ; CHECK-NEXT:  .ascii "X8 <- M[<X2> .. +8]\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "@12\n"
-; CHECK-NEXT:  .ascii "X0 <- X8 | X1 | X0\n"
+; CHECK-NEXT:  .ascii "X0 <- X0 | X1 | X8\n"
 ; CHECK-NEXT:  .ascii "@16\n"
 ; CHECK-NEXT:  .ascii "END\n"
 

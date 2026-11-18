@@ -169,7 +169,7 @@
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "send X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "V0[5] <- M[<X0>] per 1\n"
+; CHECK-NEXT:  .ascii "V0[5] <- M[<X0>]\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; CHECK-LABEL: HBNG_ld1lane32_annot:

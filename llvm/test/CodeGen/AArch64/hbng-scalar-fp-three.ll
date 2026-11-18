@@ -8,49 +8,49 @@
 ; fmulx d0, d0, d1
 ; CHECK-LABEL: HBNG_fmulxd_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:7] per 8\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:7]\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; frecps s0, s0, s1
 ; CHECK-LABEL: HBNG_frecpss_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:3] <- V0[0:3] | V1[0:3] per 4\n"
+; CHECK-NEXT:  .ascii "V0[0:3] <- V0[0:3] | V1[0:3]\n"
 ; CHECK-NEXT:  .ascii "V0[4:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; frsqrts d0, d0, d1
 ; CHECK-LABEL: HBNG_frsqrtsd_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:7] per 8\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:7]\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fabd s0, s0, s1
 ; CHECK-LABEL: HBNG_fabds_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:3] <- V0[0:3] | V1[0:3] per 4\n"
+; CHECK-NEXT:  .ascii "V0[0:3] <- V0[0:3] | V1[0:3]\n"
 ; CHECK-NEXT:  .ascii "V0[4:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; frecpx d0, d0
 ; CHECK-LABEL: HBNG_frecpxd_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] per 8\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7]\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; fcmeq d0, d0, d1
 ; CHECK-LABEL: HBNG_fcmeqd_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- 0 excl V0[0:7] | V1[0:7] per 8\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- 0 excl V0[0:7] | V1[0:7]\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; facgt s0, s0, s1 ; fmov w0, s0
 ; CHECK-LABEL: HBNG_facgts_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:3] <- 0 excl V0[0:3] | V1[0:3] per 4\n"
+; CHECK-NEXT:  .ascii "V0[0:3] <- 0 excl V0[0:3] | V1[0:3]\n"
 ; CHECK-NEXT:  .ascii "V0[4:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "X0 <- V0[0:3]\n"
@@ -59,7 +59,7 @@
 ; fcvtxn s0, d0
 ; CHECK-LABEL: HBNG_fcvtxns_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:3] <- V0[0:7] per 8:4\n"
+; CHECK-NEXT:  .ascii "V0[0:3] <- V0[0:7]\n"
 ; CHECK-NEXT:  .ascii "V0[4:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"

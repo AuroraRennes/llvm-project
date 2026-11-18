@@ -40,7 +40,7 @@
 ; CHECK-NEXT:  .ascii "@20\n"
 ; CHECK-NEXT:  .ascii "X20 <- 0\n"
 ; CHECK-NEXT:  .ascii "@24\n"
-; CHECK-NEXT:  .ascii "X0 <- X5 | X4\n"
+; CHECK-NEXT:  .ascii "X0 <- X4 | X5\n"
 ; CHECK-NEXT:  .ascii "@28\n"
 ; CHECK-NEXT:  .ascii "LR <- 0\n"
 ; CHECK-NEXT:  .ascii "END\n"
@@ -55,8 +55,8 @@
 ; ldp x20, x19, [sp, #16] ; ldr x30, [sp], #32
 ; CHECK-LABEL: HBNG_nzcv_across_call_split_1_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "X20 <- M[<SP> + 16 .. +8]\n"
 ; CHECK-NEXT:  .ascii "X19 <- M[<SP> + 24 .. +8]\n"
+; CHECK-NEXT:  .ascii "X20 <- M[<SP> + 16 .. +8]\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "LR <- M[<SP> .. +8]\n"
 ; CHECK-NEXT:  .ascii "<SP> <- <SP> + 32\n"

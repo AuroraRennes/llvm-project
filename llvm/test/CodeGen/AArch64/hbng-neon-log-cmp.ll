@@ -8,13 +8,13 @@
 ; and v0.16b, v1.16b, v0.16b
 ; CHECK-LABEL: HBNG_and16_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:15] <- V1[0:15] | V0[0:15] per 1\n"
+; CHECK-NEXT:  .ascii "V0[0:15] <- V0[0:15] | V1[0:15] per 1\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
 ; eor v0.8b, v1.8b, v0.8b
 ; CHECK-LABEL: HBNG_eor8_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- V1[0:7] | V0[0:7] per 1\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- V0[0:7] | V1[0:7] per 1\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"
@@ -56,7 +56,7 @@
 ; cmtst v0.8b, v1.8b, v0.8b
 ; CHECK-LABEL: HBNG_cmtst_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
-; CHECK-NEXT:  .ascii "V0[0:7] <- 0 excl V1[0:7] | V0[0:7] per 1\n"
+; CHECK-NEXT:  .ascii "V0[0:7] <- 0 excl V0[0:7] | V1[0:7] per 1\n"
 ; CHECK-NEXT:  .ascii "V0[8:15] <- 0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "END\n"

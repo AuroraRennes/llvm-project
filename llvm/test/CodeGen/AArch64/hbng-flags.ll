@@ -48,7 +48,7 @@ define i128 @add128(i128 %a, i128 %b) {
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "X8 <- X0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
-; CHECK-NEXT:  .ascii "X0 <- X8 | X1\n"
+; CHECK-NEXT:  .ascii "X0 <- X1 | X8\n"
 ; CHECK-NEXT:  .ascii "@8\n"
 ; CHECK-NEXT:  .ascii "END\n"
 define i64 @addshift(i64 %a, i64 %s) {

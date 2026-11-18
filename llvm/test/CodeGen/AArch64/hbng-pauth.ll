@@ -94,7 +94,7 @@
 ; CHECK-NEXT:  .ascii "@60\n"
 ; CHECK-NEXT:  .ascii "@64\n"
 ; CHECK-NEXT:  .ascii "@68\n"
-; CHECK-NEXT:  .ascii "X17 <- X17 | X16\n"
+; CHECK-NEXT:  .ascii "X17 <- X16 | X17\n"
 ; CHECK-NEXT:  .ascii "@72\n"
 ; CHECK-NEXT:  .ascii "LR <- X17\n"
 ; CHECK-NEXT:  .ascii "@76\n"

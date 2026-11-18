@@ -1,4 +1,5 @@
 #include "AArch64.h"
+#include "AArch64HBNGAnnotation.h"
 #include "AArch64HBNGMemAccess.h"
 #include "AArch64InstrInfo.h"
 #include "AArch64MachineFunctionInfo.h"
@@ -15,6 +16,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "MCTargetDesc/AArch64AddressingModes.h"
 #include "MCTargetDesc/AArch64MCTargetDesc.h"
@@ -45,6 +47,8 @@ class AArch64HBNGAnnotate : public MachineFunctionPass {
     const AArch64InstrInfo *TII;
     const TargetRegisterInfo *TRI;
     const MachineRegisterInfo *MRI;
+    // The terms of the function's annotations.
+    hbng::TermPool Terms;
 
 public:
     static char ID;
@@ -53,14 +57,14 @@ public:
     }
 
     // The groups of MI, one per instruction it is encoded as (none for a
-    // pseudo that emits nothing), each the lines of that instruction.
-    std::vector<std::vector<std::string>> generateGroups(MachineInstr &MI);
-    std::vector<std::vector<std::string>> genInlineAsmGroups(MachineInstr &MI);
-    std::vector<std::string> genSendLines(MachineInstr &MI);
-    // The lines of an instruction encoded as one instruction.
-    std::vector<std::string> generateAnnotation(MachineInstr &MI);
-    std::vector<std::string> genTrackedLines(MachineInstr &MI);
-    std::vector<std::string> generateTagAnnotation(MachineInstr &MI);
+    // pseudo that emits nothing), each the transfer of that instruction.
+    std::vector<hbng::Transfer> generateGroups(MachineInstr &MI);
+    std::vector<hbng::Transfer> genInlineAsmGroups(MachineInstr &MI);
+    hbng::Transfer genSends(MachineInstr &MI);
+    // The transfer of an instruction encoded as one instruction.
+    hbng::Transfer generateAnnotation(MachineInstr &MI);
+    hbng::Transfer genTrackedValues(MachineInstr &MI);
+    hbng::Transfer generateTagAnnotation(MachineInstr &MI);
 
     // Main entrypoint for LLVM backend passes
     bool runOnMachineFunction(MachineFunction &MF) override;
@@ -70,26 +74,27 @@ public:
     }
 
 private:
-    std::optional<std::string> gprLoc(Register R);
-    std::string vecRange(Register R, unsigned Lo, unsigned Len);
-    std::optional<std::string> srcLoc(Register R);
-    std::string valueOf(Register R);
-    std::vector<std::string> writeReg(Register R, const std::string &Rhs);
-    std::vector<std::string> genDataflow(MachineInstr &MI);
-    std::vector<std::string> genClear(MachineInstr &MI);
-    std::vector<std::string> genLinkAnnotation();
-    std::pair<std::string, int64_t> genAddress(MachineInstr &MI,
+    hbng::LocList locsOf(Register R);
+    void writeReg(hbng::Transfer &T, Register R, ArrayRef<hbng::Loc> Srcs,
+                  bool Bytewise = false);
+    void writeRegPer(hbng::Transfer &T, Register R,
+                     ArrayRef<ArrayRef<hbng::Loc>> Groups, unsigned In,
+                     unsigned Out, ArrayRef<ArrayRef<hbng::Loc>> Excl = {});
+    void writeRegMap(hbng::Transfer &T, Register R,
+                     ArrayRef<std::optional<hbng::Loc>> Map);
+    hbng::Term termOf(Register R);
+    void genDataflow(hbng::Transfer &T, MachineInstr &MI);
+    void genClear(hbng::Transfer &T, MachineInstr &MI);
+    std::pair<hbng::Term, int64_t> genAddress(MachineInstr &MI,
                                                const HBNGMemAccess &A);
-    std::vector<std::string> genMemAnnotation(MachineInstr &MI, const HBNGMemAccess &A);
-    std::vector<std::string> genVecMemAnnotation(MachineInstr &MI,
+    hbng::Transfer genMemAnnotation(MachineInstr &MI, const HBNGMemAccess &A);
+    hbng::Transfer genVecMemAnnotation(MachineInstr &MI,
                                                  const HBNGMemAccess &A);
-    static bool isUnsupported(ArrayRef<std::string> Lines);
-    std::optional<std::vector<std::string>> genNeonAnnotation(MachineInstr &MI);
-    std::string vecWhole(Register R);
-    std::string byteMap(ArrayRef<Register> Srcs, ArrayRef<unsigned> Map);
+    std::optional<hbng::Transfer> genNeonAnnotation(MachineInstr &MI);
     unsigned regBytes(Register R);
-    std::string genTrackedValueLine(Register Dst, Register Src, int64_t Imm);
-    std::string genSPWriteLine(MachineInstr &MI, const HBNGSPWrite &W);
+    void setTrackedValue(hbng::Transfer &T, Register Dst, Register Src,
+                         int64_t Imm);
+    void genSPWrite(hbng::Transfer &T, MachineInstr &MI, const HBNGSPWrite &W);
 };
 
 char AArch64HBNGAnnotate::ID = 0;
@@ -165,125 +170,80 @@ static bool isFPR(Register R) {
          AArch64::FPR8RegClass.contains(R);
 }
 
-// Bytes [Lo, Lo + Len) of V<N>.
-static std::string vRange(unsigned N, unsigned Lo, unsigned Len) {
-  std::string S = "V" + std::to_string(N) + "[" + std::to_string(Lo);
-  if (Len > 1)
-    S += ":" + std::to_string(Lo + Len - 1);
-  return S + "]";
-}
-
-// T + B, B in bytes, possibly negative.
-static std::string plus(const std::string &T, int64_t B) {
-  if (B == 0)
-    return T;
-  return T + (B < 0 ? " - " : " + ") +
-         std::to_string(B < 0 ? -uint64_t(B) : uint64_t(B));
-}
-
-// The union of the sources, each once; "0" when there is none.
-static std::string unionOf(ArrayRef<std::string> Srcs) {
-  SmallVector<std::string, 4> Seen;
-  for (const std::string &S : Srcs)
-    if (!is_contained(Seen, S))
-      Seen.push_back(S);
-  return Seen.empty() ? "0" : join(Seen, " | ");
-}
-
-// The tag of a general register, none for the zero register.
-std::optional<std::string> AArch64HBNGAnnotate::gprLoc(Register R) {
-  if (R == AArch64::XZR || R == AArch64::WZR)
-    return std::nullopt;
-  if (R == AArch64::SP || R == AArch64::WSP)
-    return std::string("SP");
-  unsigned N = TRI->getEncodingValue(R);
-  if (N == 29)
-    return std::string("FP");
-  if (N == 30)
-    return std::string("LR");
-  return "X" + std::to_string(N);
-}
-
-// Bytes [Lo, Lo + Len) of the V register R.
-std::string AArch64HBNGAnnotate::vecRange(Register R, unsigned Lo,
-                                          unsigned Len) {
-  return vRange(TRI->getEncodingValue(R), Lo, Len);
-}
-
-// A source register: its tag, or every byte of an FP/SIMD register.
-std::optional<std::string> AArch64HBNGAnnotate::srcLoc(Register R) {
+// The locations of a source register: its tag (none for the zero register),
+// or every byte of an FP/SIMD register.
+hbng::LocList AArch64HBNGAnnotate::locsOf(Register R) {
   if (isFPR(R))
-    return vecRange(R, 0, regBytes(R));
-  return gprLoc(R);
+    return hbng::vBytes(TRI->getEncodingValue(R), 0, regBytes(R));
+  if (R == AArch64::XZR || R == AArch64::WZR)
+    return {};
+  if (R == AArch64::SP || R == AArch64::WSP)
+    return {hbng::Loc::sp()};
+  return {hbng::Loc::x(TRI->getEncodingValue(R))};
+}
+
+// Writes the register R from the union of Srcs, or, Bytewise, byte k from
+// Srcs[k]: nothing for the zero register. An FP/SIMD register written as B,
+// H, S or D has its bytes above cleared (the write zeroes the top of the
+// register).
+void AArch64HBNGAnnotate::writeReg(hbng::Transfer &T, Register R,
+                                   ArrayRef<hbng::Loc> Srcs, bool Bytewise) {
+  if (!isFPR(R)) {
+    T.assign(locsOf(R), Bytewise ? Srcs.take_front() : Srcs);
+    return;
+  }
+  unsigned N = TRI->getEncodingValue(R), Bytes = regBytes(R);
+  hbng::LocList Dsts = hbng::vBytes(N, 0, Bytes);
+  if (Bytewise)
+    T.assignPer(Dsts, {Srcs}, 1, 1);
+  else
+    T.assign(Dsts, Srcs);
+  T.assign(hbng::vBytes(N, Bytes, 16 - Bytes), {});
+}
+
+// Writes the register R per element, as Transfer::assignPer: an FP/SIMD
+// register has its bytes above those written cleared.
+void AArch64HBNGAnnotate::writeRegPer(hbng::Transfer &T, Register R,
+                                      ArrayRef<ArrayRef<hbng::Loc>> Groups,
+                                      unsigned In, unsigned Out,
+                                      ArrayRef<ArrayRef<hbng::Loc>> Excl) {
+  T.assignPer(locsOf(R), Groups, In, Out, Excl);
+  if (isFPR(R)) {
+    unsigned Bytes = regBytes(R);
+    T.assign(hbng::vBytes(TRI->getEncodingValue(R), Bytes, 16 - Bytes), {});
+  }
+}
+
+// Writes byte k of the register R from Map[k], as Transfer::assignMap; the
+// bytes above are cleared as above.
+void AArch64HBNGAnnotate::writeRegMap(hbng::Transfer &T, Register R,
+                                      ArrayRef<std::optional<hbng::Loc>> Map) {
+  T.assignMap(locsOf(R), Map);
+  if (isFPR(R)) {
+    unsigned Bytes = regBytes(R);
+    T.assign(hbng::vBytes(TRI->getEncodingValue(R), Bytes, 16 - Bytes), {});
+  }
 }
 
 // The value of a register at the instruction's entry. W29 is FP's value too
 // (a register offset is read as its W register, extended).
-std::string AArch64HBNGAnnotate::valueOf(Register R) {
+hbng::Term AArch64HBNGAnnotate::termOf(Register R) {
   if (R == AArch64::SP || R == AArch64::WSP)
-    return "<SP>";
+    return Terms.sp();
   if (R == AArch64::FP || R == AArch64::W29)
-    return "<FP>";
-  return "<X" + std::to_string(TRI->getEncodingValue(R)) + ">";
-}
-
-// The lines writing Rhs to the register R: nothing for the zero register. An
-// FP/SIMD register written as B, H, S or D has its bytes above cleared (the
-// write zeroes the top of the register), on their own line; a clear of all
-// of it is one line.
-std::vector<std::string> AArch64HBNGAnnotate::writeReg(Register R,
-                                                       const std::string &Rhs) {
-  if (!isFPR(R)) {
-    std::optional<std::string> L = gprLoc(R);
-    if (!L)
-      return {};
-    return {*L + " <- " + Rhs + "\n"};
-  }
-  unsigned N = TRI->getEncodingValue(R), Bytes = regBytes(R);
-  if (Rhs == "0" || Bytes == 16)
-    return {vRange(N, 0, Rhs == "0" ? 16 : Bytes) + " <- " + Rhs + "\n"};
-  return {vRange(N, 0, Bytes) + " <- " + Rhs + "\n",
-          vRange(N, Bytes, 16 - Bytes) + " <- 0\n"};
+    return Terms.fp();
+  return Terms.reg(TRI->getEncodingValue(R));
 }
 
 // The destination (operand 0) from the union of every register read.
-std::vector<std::string> AArch64HBNGAnnotate::genDataflow(MachineInstr &MI) {
-  SmallVector<std::string, 4> Srcs;
+void AArch64HBNGAnnotate::genDataflow(hbng::Transfer &T, MachineInstr &MI) {
+  hbng::LocList Srcs;
   for (unsigned I = 1, E = MI.getNumExplicitOperands(); I < E; ++I) {
     const MachineOperand &MO = MI.getOperand(I);
     if (MO.isReg() && MO.isUse())
-      if (std::optional<std::string> L = srcLoc(MO.getReg()))
-        Srcs.push_back(*L);
+      Srcs.append(locsOf(MO.getReg()));
   }
-  return writeReg(MI.getOperand(0).getReg(), unionOf(Srcs));
-}
-
-// A line whose locations each get only their own tag changes nothing: one
-// tag per general register (X9 <- X9, LR <- LR), byte for byte in a V
-// register (V0[0:15] <- V0[0:15] per 1, V0[5] <- V0[5]). Not a V range
-// without "per 1" (every byte from every byte), nor excl, over or a value.
-static bool keepsItsTags(StringRef Line) {
-  auto [Dst, Src] = Line.split(" <- ");
-  if (Src.empty() || Dst.starts_with("<"))
-    return false;
-  bool VRange = Dst.starts_with("V") && Dst.contains(':');
-  if (Src == Dst)
-    return !VRange;
-  return Dst.starts_with("V") && Src.consume_front(Dst) && Src == " per 1";
-}
-
-// Appends the lines of Text ("...\n" each) that change a tag.
-static void appendChangingLines(std::vector<std::string> &Out,
-                                StringRef Text) {
-  std::string Kept;
-  while (!Text.empty()) {
-    auto [Line, Rest] = Text.split('\n');
-    if (!keepsItsTags(Line))
-      Kept += (Line + "\n").str();
-    Text = Rest;
-  }
-  if (!Kept.empty())
-    Out.push_back(Kept);
+  writeReg(T, MI.getOperand(0).getReg(), Srcs);
 }
 
 // An instruction whose result does not depend on its source, read twice:
@@ -320,15 +280,15 @@ static bool cancelsItsSource(const MachineInstr &MI) {
 // The destination (operand 0) cleared: a constant, an address from PC, a
 // system register (thread pointer, FPCR/FPSR, counters: not data the program
 // read or received).
-std::vector<std::string> AArch64HBNGAnnotate::genClear(MachineInstr &MI) {
-  return writeReg(MI.getOperand(0).getReg(), "0");
+void AArch64HBNGAnnotate::genClear(hbng::Transfer &T, MachineInstr &MI) {
+  writeReg(T, MI.getOperand(0).getReg(), {});
 }
 
 //===----------------------------------------------------------------------===//
 // SIMD/FP registers
 //
 // A V register has one tag per byte: V0[0:15] is all of v0, V0[4:7] its
-// second 4-byte lane. The NEON forms and their lines:
+// second 4-byte lane. The NEON forms and their statements:
 //
 //   add  v0.4s, v1.4s, v2.4s      V0[0:15] <- V1[0:15] | V2[0:15] per 4
 //     lane i from lane i of each source ("per 4": lanes of 4 bytes)
@@ -356,12 +316,7 @@ std::vector<std::string> AArch64HBNGAnnotate::genClear(MachineInstr &MI) {
 //   mov  w0, v1.s[1]              X0 <- V1[4:7]
 //   movi v0.4s, #1                V0[0:15] <- 0
 //
-// A 64-bit form (v0.2s) writes V0[0:7] and clears V0[8:15] on a second line.
-
-// Every byte of the V register R.
-std::string AArch64HBNGAnnotate::vecWhole(Register R) {
-  return vecRange(R, 0, regBytes(R));
-}
+// A 64-bit form (v0.2s) writes V0[0:7] and clears V0[8:15].
 
 // The size of a register in bytes.
 unsigned AArch64HBNGAnnotate::regBytes(Register R) {
@@ -370,58 +325,8 @@ unsigned AArch64HBNGAnnotate::regBytes(Register R) {
          8;
 }
 
-// " per In:Out", or " per In" when they are equal.
-static std::string per(unsigned In, unsigned Out) {
-  std::string S = " per " + std::to_string(In);
-  if (In != Out)
-    S += ":" + std::to_string(Out);
-  return S;
-}
-
 // A byte map entry for a byte that gets no tag.
 static constexpr unsigned ZeroByte = ~0u;
-
-// The byte map of Map, entries into the bytes of Srcs taken one after the
-// other (ZeroByte: "0"): runs of consecutive bytes of one source operand,
-// ascending (V1[4:7]) or descending (V1[7:4]).
-std::string AArch64HBNGAnnotate::byteMap(ArrayRef<Register> Srcs,
-                                         ArrayRef<unsigned> Map) {
-  struct Byte {
-    unsigned Src, V, B; // source operand, V register number, byte
-  };
-  SmallVector<Byte, 32> Bytes;
-  for (unsigned S = 0; S < Srcs.size(); ++S)
-    for (unsigned B = 0, E = regBytes(Srcs[S]); B < E; ++B)
-      Bytes.push_back({S, TRI->getEncodingValue(Srcs[S]), B});
-  SmallVector<std::string, 16> Runs;
-  for (unsigned K = 0; K < Map.size();) {
-    if (Map[K] == ZeroByte) {
-      Runs.push_back("0");
-      ++K;
-      continue;
-    }
-    Byte First = Bytes[Map[K]];
-    unsigned Hi = First.B;
-    int Dir = 0;
-    for (++K; K < Map.size() && Map[K] != ZeroByte; ++K) {
-      Byte Next = Bytes[Map[K]];
-      int D = Next.Src != First.Src ? 0
-              : Next.B == Hi + 1    ? 1
-              : Next.B + 1 == Hi    ? -1
-                                    : 0;
-      if (D == 0 || (Dir && D != Dir))
-        break;
-      Dir = D;
-      Hi = Next.B;
-    }
-    std::string S =
-        "V" + std::to_string(First.V) + "[" + std::to_string(First.B);
-    if (Hi != First.B)
-      S += ":" + std::to_string(Hi);
-    Runs.push_back(S + "]");
-  }
-  return "[" + join(Runs, " ") + "]";
-}
 
 namespace {
 // A NEON opcode name split into its mnemonic and arrangement: "ADDv4i32" is
@@ -647,10 +552,10 @@ getPermMap(const NeonName &NN, const MachineInstr &MI, unsigned DstBytes) {
   return Map;
 }
 
-// The annotation of a NEON instruction (Advanced SIMD vector and scalar
-// forms), std::nullopt if it is not one, or an unsupported line for a NEON
+// The transfer of a NEON instruction (Advanced SIMD vector and scalar
+// forms), std::nullopt if it is not one, or an unsupported one for a NEON
 // mnemonic whose form is not described.
-std::optional<std::vector<std::string>>
+std::optional<hbng::Transfer>
 AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
   StringRef Name = TII->getName(MI.getOpcode());
   std::optional<NeonName> NN = parseNeonName(Name);
@@ -659,14 +564,16 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
   NeonFamily F = getNeonFamily(NN->Mn);
   if (F == NF_None)
     return std::nullopt;
-  std::vector<std::string> Unsupported = {"unsupported \"" + Name.str() +
-                                          "\"\n"};
+  hbng::Transfer Unsupported;
+  Unsupported.unsupported(Name);
+  hbng::Transfer T;
 
   unsigned NumOps = MI.getNumExplicitOperands();
   MachineOperand &Dst = MI.getOperand(0);
   if (!Dst.isReg() || !Dst.isDef())
     return Unsupported;
   Register Rd = Dst.getReg();
+  unsigned RdN = TRI->getEncodingValue(Rd);
   // A destination register that is also read (tied): its old value.
   bool Tied = NumOps > 1 && MI.getOperand(1).isReg() &&
               MI.getOperand(1).isTied() && MI.getOperand(1).isUse();
@@ -689,11 +596,41 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
       return isFPR(R) && regBytes(R) == Bytes;
     });
   };
+  // Bytes [Lo, Lo + Len) of the V register R.
+  auto Bytes = [&](Register R, unsigned Lo, unsigned Len) {
+    return hbng::vBytes(TRI->getEncodingValue(R), Lo, Len);
+  };
+  // Every byte of the V register R.
+  auto Whole = [&](Register R) { return Bytes(R, 0, regBytes(R)); };
+  // Every byte of every register of Rs.
   auto Union = [&](ArrayRef<Register> Rs) {
-    SmallVector<std::string, 4> L;
+    hbng::LocList L;
     for (Register R : Rs)
-      L.push_back(vecWhole(R));
-    return unionOf(L);
+      L.append(Whole(R));
+    return L;
+  };
+  // One group per register of Rs, for the per forms (Store keeps them).
+  auto Groups = [&](ArrayRef<Register> Rs) {
+    SmallVector<hbng::LocList, 4> Store;
+    for (Register R : Rs)
+      Store.push_back(Whole(R));
+    return Store;
+  };
+  auto Views = [&](const SmallVectorImpl<hbng::LocList> &Store) {
+    SmallVector<ArrayRef<hbng::Loc>, 4> V;
+    for (const hbng::LocList &L : Store)
+      V.push_back(L);
+    return V;
+  };
+  // The byte map of Map, entries into the bytes of Rs taken one after the
+  // other (ZeroByte: none).
+  auto ByteMap = [&](ArrayRef<Register> Rs, ArrayRef<unsigned> Map) {
+    hbng::LocList All = Union(Rs);
+    SmallVector<std::optional<hbng::Loc>, 16> M;
+    for (unsigned I : Map)
+      M.push_back(I == ZeroByte ? std::nullopt
+                                : std::optional<hbng::Loc>(All[I]));
+    return M;
   };
 
   switch (F) {
@@ -704,49 +641,55 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     SmallVector<Register, 4> Rs = Srcs(1);
     if (!DB || DB % E || !AllOf(Rs, DB))
       return Unsupported;
-    if (!Indexed)
-      return writeReg(Rd, Union(Rs) + per(E, E));
-    std::string Lane = vecRange(MI.getOperand(NumOps - 2).getReg(),
-                                MI.getOperand(NumOps - 1).getImm() * E, E);
-    std::vector<std::string> Lines;
-    for (unsigned Lo = 0; Lo < DB; Lo += E) {
-      SmallVector<std::string, 4> L;
-      for (Register R : Rs)
-        L.push_back(vecRange(R, Lo, E));
-      L.push_back(Lane);
-      Lines.push_back(vecRange(Rd, Lo, E) + " <- " + unionOf(L) + "\n");
+    if (!Indexed) {
+      SmallVector<hbng::LocList, 4> G = Groups(Rs);
+      writeRegPer(T, Rd, Views(G), E, E);
+      return T;
     }
-    if (DB < 16)
-      Lines.push_back(vecRange(Rd, DB, 16 - DB) + " <- 0\n");
-    return Lines;
+    hbng::LocList Lane = Bytes(MI.getOperand(NumOps - 2).getReg(),
+                            MI.getOperand(NumOps - 1).getImm() * E, E);
+    for (unsigned Lo = 0; Lo < DB; Lo += E) {
+      hbng::LocList L;
+      for (Register R : Rs)
+        L.append(Bytes(R, Lo, E));
+      L.append(Lane);
+      T.assign(Bytes(Rd, Lo, E), L);
+    }
+    T.assign(hbng::vBytes(RdN, DB, 16 - DB), {});
+    return T;
   }
   case NF_Log: {
     // The old destination included when it is read (orr and bic immediate).
     SmallVector<Register, 4> Rs = Srcs(1);
     if (!DB || !AllOf(Rs, DB))
       return Unsupported;
-    return writeReg(Rd, Union(Rs) + per(1, 1));
+    SmallVector<hbng::LocList, 4> G = Groups(Rs);
+    writeRegPer(T, Rd, Views(G), 1, 1);
+    return T;
   }
   case NF_Cmp: {
     SmallVector<Register, 4> Rs = Srcs(1);
     if (!DB || DB % E || !AllOf(Rs, DB))
       return Unsupported;
-    return writeReg(Rd, "0 excl " + Union(Rs) + per(E, E));
+    SmallVector<hbng::LocList, 4> G = Groups(Rs);
+    writeRegPer(T, Rd, {}, E, E, Views(G));
+    return T;
   }
   case NF_Pair: {
     SmallVector<Register, 4> Rs = Srcs(1);
-    if (NN->Rest == "p") // scalar pairwise: a reduction of two elements
-      return writeReg(Rd, Union(Rs));
+    if (NN->Rest == "p") { // scalar pairwise: a reduction of two elements
+      writeReg(T, Rd, Union(Rs));
+      return T;
+    }
     if (!DB || DB % (2 * E) || Rs.size() != 2 || !AllOf(Rs, DB))
       return Unsupported;
-    std::vector<std::string> Lines = {
-        vecRange(Rd, 0, DB / 2) + " <- " + vecWhole(Rs[0]) + per(2 * E, E) +
-            "\n",
-        vecRange(Rd, DB / 2, DB / 2) + " <- " + vecWhole(Rs[1]) +
-            per(2 * E, E) + "\n"};
-    if (DB < 16)
-      Lines.push_back(vecRange(Rd, DB, 16 - DB) + " <- 0\n");
-    return Lines;
+    hbng::LocList S0 = Whole(Rs[0]), S1 = Whole(Rs[1]);
+    T.assignPer(hbng::vBytes(RdN, 0, DB / 2), {ArrayRef<hbng::Loc>(S0)}, 2 * E,
+                E);
+    T.assignPer(hbng::vBytes(RdN, DB / 2, DB / 2),
+                {ArrayRef<hbng::Loc>(S1)}, 2 * E, E);
+    T.assign(hbng::vBytes(RdN, DB, 16 - DB), {});
+    return T;
   }
   case NF_PairL: {
     // Output element i, twice as wide, from input elements 2i and 2i+1 of the
@@ -756,10 +699,13 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     SmallVector<Register, 4> Rs = Srcs(1);
     if (Tied != Accumulates || !DB || DB != NN->N * E || !AllOf(Rs, DB))
       return Unsupported;
-    return writeReg(Rd, Union(Rs) + per(2 * E, 2 * E));
+    SmallVector<hbng::LocList, 4> G = Groups(Rs);
+    writeRegPer(T, Rd, Views(G), 2 * E, 2 * E);
+    return T;
   }
   case NF_Red:
-    return writeReg(Rd, Union(Srcs(1)));
+    writeReg(T, Rd, Union(Srcs(1)));
+    return T;
   case NF_Wide: {
     // The source arrangement is in the name; the "2" forms read the upper
     // half of their (128-bit) sources. A scalar form (one element of the
@@ -780,43 +726,40 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     bool Scalar = NN->N == 1 && DB == E;
     unsigned SE = Scalar ? E / 2 : E; // a source element's size
     // The element an indexed form reads in every lane.
-    std::string Elem;
+    hbng::LocList Elem;
     if (Indexed)
-      Elem = vecRange(MI.getOperand(NumOps - 2).getReg(),
-                      MI.getOperand(NumOps - 1).getImm() * SE, SE);
+      Elem = Bytes(MI.getOperand(NumOps - 2).getReg(),
+                   MI.getOperand(NumOps - 1).getImm() * SE, SE);
     if (Scalar) {
       if (!SE || Narrow.empty() || !AllOf(Narrow, SE) ||
           (WideRs0 && !AllOf(Rs[0], E)))
         return Unsupported;
-      SmallVector<std::string, 4> L;
+      hbng::LocList L;
       if (WideRs0)
-        L.push_back(vecWhole(Rs[0]));
-      for (Register R : Narrow)
-        L.push_back(vecWhole(R));
-      if (Indexed)
-        L.push_back(Elem);
-      return writeReg(Rd, unionOf(L));
+        L.append(Whole(Rs[0]));
+      L.append(Union(Narrow));
+      L.append(Elem);
+      writeReg(T, Rd, L);
+      return T;
     }
     unsigned SB = NN->N * E;
     if ((SB != 8 && SB != 16) || DB != 16)
       return Unsupported;
     // The wide, accumulating and by-element forms, lane by lane, with the
-    // narrow sources widened; one line per lane.
+    // narrow sources widened.
     if (WideRs0 || Indexed) {
       if (Narrow.empty() || !AllOf(Narrow, SB) || (WideRs0 && !AllOf(Rs[0], 16)))
         return Unsupported;
-      std::vector<std::string> Lines;
       for (unsigned Lo = 0; Lo < 16; Lo += 2 * E) {
-        SmallVector<std::string, 4> L;
+        hbng::LocList L;
         if (WideRs0)
-          L.push_back(vecRange(Rs[0], Lo, 2 * E));
+          L.append(Bytes(Rs[0], Lo, 2 * E));
         for (Register R : Narrow)
-          L.push_back(vecRange(R, SB - 8 + Lo / 2, E));
-        if (Indexed)
-          L.push_back(Elem);
-        Lines.push_back(vecRange(Rd, Lo, 2 * E) + " <- " + unionOf(L) + "\n");
+          L.append(Bytes(R, SB - 8 + Lo / 2, E));
+        L.append(Elem);
+        T.assign(Bytes(Rd, Lo, 2 * E), L);
       }
-      return Lines;
+      return T;
     }
     if (!AllOf(Rs, SB))
       return Unsupported;
@@ -835,13 +778,15 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
                           : J - S < E    ? Lo + I * E + J - S
                           : Signed       ? Lo + I * E + E - 1
                                          : ZeroByte);
-        return writeReg(Rd, byteMap(Rs, Map));
+        writeRegMap(T, Rd, ByteMap(Rs, Map));
+        return T;
       }
     }
-    SmallVector<std::string, 2> L;
+    SmallVector<hbng::LocList, 2> G;
     for (Register R : Rs)
-      L.push_back(vecRange(R, SB - 8, 8));
-    return writeReg(Rd, unionOf(L) + per(E, 2 * E));
+      G.push_back(Bytes(R, SB - 8, 8));
+    writeRegPer(T, Rd, Views(G), E, 2 * E);
+    return T;
   }
   case NF_Narrow: {
     // The destination arrangement is in the name, after the sources' for the
@@ -866,16 +811,21 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     SmallVector<Register, 4> Rs = Srcs(Tied ? 2 : 1);
     if (!AllOf(Rs, Upper ? 16 : 2 * Out))
       return Unsupported;
-    std::string Rhs = Union(Rs) + per(2 * El, El);
-    if (Upper)
-      return std::vector<std::string>{vecRange(Rd, 8, 8) + " <- " + Rhs + "\n"};
+    SmallVector<hbng::LocList, 4> G = Groups(Rs);
+    if (Upper) {
+      T.assignPer(hbng::vBytes(RdN, 8, 8), Views(G), 2 * El, El);
+      return T;
+    }
     if (DB != Out)
       return Unsupported;
-    return writeReg(Rd, Rhs);
+    writeRegPer(T, Rd, Views(G), 2 * El, El);
+    return T;
   }
   case NF_Perm: {
-    if (NN->Mn == "DUP" && NN->Rest == "gpr") // X -> V, every element
-      return writeReg(Rd, gprLoc(MI.getOperand(1).getReg()).value_or("0"));
+    if (NN->Mn == "DUP" && NN->Rest == "gpr") { // X -> V, every element
+      writeReg(T, Rd, locsOf(MI.getOperand(1).getReg()));
+      return T;
+    }
     if (!NN->N || !DB)
       return Unsupported;
     unsigned NumSrc = NN->Mn == "DUP" || NN->Mn.starts_with("REV") ? 1 : 2;
@@ -889,7 +839,8 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     std::optional<SmallVector<unsigned, 16>> Map = getPermMap(*NN, MI, DB);
     if (!Map)
       return Unsupported;
-    return writeReg(Rd, byteMap(Rs, *Map));
+    writeRegMap(T, Rd, ByteMap(Rs, *Map));
+    return T;
   }
   case NF_Tbl: {
     // (Vd, table list, Vm), or (Vd, Vd, table list, Vm) for TBX, which keeps
@@ -911,17 +862,16 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     Register Idx = MI.getOperand(Tbx ? 3 : 2).getReg();
     if (!DB || !AllOf(Idx, DB))
       return Unsupported;
-    if (!Tbx)
-      return writeReg(Rd, Union(Table) + " excl " + vecWhole(Idx) + per(1, 1));
-    // Byte k also from the old byte k: one line per byte.
-    std::vector<std::string> Lines;
-    for (unsigned K = 0; K < DB; ++K)
-      Lines.push_back(vecRange(Rd, K, 1) + " <- " +
-                      unionOf({vecRange(Rd, K, 1), Union(Table)}) + " excl " +
-                      vecRange(Idx, K, 1) + "\n");
-    if (DB < 16)
-      Lines.push_back(vecRange(Rd, DB, 16 - DB) + " <- 0\n");
-    return Lines;
+    // Byte k from the table (and, for TBX, the old byte k), the index
+    // byte k read only.
+    for (unsigned K = 0; K < DB; ++K) {
+      hbng::LocList L = Union(Table);
+      if (Tbx)
+        L.append(Bytes(Rd, K, 1));
+      T.assign(Bytes(Rd, K, 1), L, Bytes(Idx, K, 1));
+    }
+    T.assign(hbng::vBytes(RdN, DB, 16 - DB), {});
+    return T;
   }
   case NF_Sel: {
     // (Vd, Vd tied, Vn, Vm). BSL: Vd is the mask, Vn and Vm the data.
@@ -933,83 +883,90 @@ AArch64HBNGAnnotate::genNeonAnnotation(MachineInstr &MI) {
     bool BSL = NN->Mn == "BSL";
     SmallVector<Register, 2> Data = {BSL ? Rn : Old, BSL ? Rm : Rn};
     Register Mask = BSL ? Old : Rm;
-    return writeReg(Rd, Union(Data) + per(1, 1) + " excl " + vecWhole(Mask) +
-                            per(1, 1));
+    SmallVector<hbng::LocList, 4> G = Groups(Data);
+    hbng::LocList M = Whole(Mask);
+    writeRegPer(T, Rd, Views(G), 1, 1, {ArrayRef<hbng::Loc>(M)});
+    return T;
   }
   case NF_Ins: {
     // (Vd, Vd tied, idx, Rn [, idx2]): one lane from Rn, the others kept.
     if (!Tied || NN->N != 0)
       return Unsupported;
-    std::string D = vecRange(Rd, MI.getOperand(2).getImm() * E, E);
+    hbng::LocList D = Bytes(Rd, MI.getOperand(2).getImm() * E, E);
     Register Rn = MI.getOperand(3).getReg();
-    if (NN->Rest == "gpr")
-      return std::vector<std::string>{D + " <- " + gprLoc(Rn).value_or("0") +
-                                      "\n"};
-    if (NN->Rest == "lane")
-      return std::vector<std::string>{
-          D + " <- " + vecRange(Rn, MI.getOperand(4).getImm() * E, E) +
-          per(1, 1) + "\n"};
+    if (NN->Rest == "gpr") {
+      T.assign(D, locsOf(Rn));
+      return T;
+    }
+    if (NN->Rest == "lane") {
+      hbng::LocList S = Bytes(Rn, MI.getOperand(4).getImm() * E, E);
+      T.assignPer(D, {ArrayRef<hbng::Loc>(S)}, 1, 1);
+      return T;
+    }
     return Unsupported;
   }
   case NF_Umov:
     // (Rd, Vn, idx): one lane to a W/X register.
     if (NN->N != 0)
       return Unsupported;
-    return writeReg(Rd, vecRange(MI.getOperand(1).getReg(),
-                                 MI.getOperand(2).getImm() * E, E));
+    writeReg(T, Rd,
+             Bytes(MI.getOperand(1).getReg(), MI.getOperand(2).getImm() * E,
+                   E));
+    return T;
   case NF_Imm:
     // (Vd, imm8 [, shift]); the ORR/BIC immediate forms are NF_Log.
     if (Tied || NumOps < 2 || !MI.getOperand(1).isImm())
       return Unsupported;
-    return writeReg(Rd, "0");
+    writeReg(T, Rd, {});
+    return T;
   }
   return Unsupported;
 }
 
 // The value of a tracked register (SP, FP) computed from another one:
 //   <Dst> <- <Src> + b        (b in bytes, may be negative)
-std::string AArch64HBNGAnnotate::genTrackedValueLine(Register Dst, Register Src,
-                                                     int64_t Imm) {
-  return valueOf(Dst) + " <- " + plus(valueOf(Src), Imm) + "\n";
+void AArch64HBNGAnnotate::setTrackedValue(hbng::Transfer &T, Register Dst,
+                                          Register Src, int64_t Imm) {
+  (Dst == AArch64::SP ? T.SP : T.FP) = Terms.plus(termOf(Src), Imm);
 }
 
 // The value of SP written by MI from sources that are not all tracked (see
 // generateAnnotation for the forms).
-std::string AArch64HBNGAnnotate::genSPWriteLine(MachineInstr &MI,
-                                                const HBNGSPWrite &W) {
-  std::string Unsupported =
-      "unsupported \"SP <- " + TII->getName(MI.getOpcode()).str() + "\"\n";
+void AArch64HBNGAnnotate::genSPWrite(hbng::Transfer &T, MachineInstr &MI,
+                                     const HBNGSPWrite &W) {
+  std::string Unsupported = "SP <- " + TII->getName(MI.getOpcode()).str();
   if (!W.Supported)
-    return Unsupported;
-  std::string Rn = valueOf(MI.getOperand(W.Rn).getReg());
+    return T.unsupported(Unsupported);
+  hbng::Term Rn = termOf(MI.getOperand(W.Rn).getReg());
   int64_t Imm = MI.getOperand(2).isImm() ? MI.getOperand(2).getImm() : 0;
   switch (MI.getOpcode()) {
   case AArch64::ADDXri:
   case AArch64::SUBXri: {
     int64_t Bytes = Imm << AArch64_AM::getShiftValue(MI.getOperand(3).getImm());
-    return "<SP> <- " + plus(Rn, W.IsSub ? -Bytes : Bytes) + "\n";
+    T.SP = Terms.plus(Rn, W.IsSub ? -Bytes : Bytes);
+    return;
   }
-  case AArch64::ANDXri: {
-    int64_t Mask = AArch64_AM::decodeLogicalImmediate(Imm, 64);
-    return "<SP> <- (" + Rn + " & " + std::to_string(Mask) + ")\n";
-  }
+  case AArch64::ANDXri:
+    T.SP = Terms.mask(Rn, AArch64_AM::decodeLogicalImmediate(Imm, 64));
+    return;
   case AArch64::ORRXri:
   case AArch64::EORXri:
-    return Unsupported; // no such term
+    return T.unsupported(Unsupported); // no such term
   default: { // ADD/SUB extended register
     unsigned Ext = MI.getOperand(3).getImm();
-    const char *Kind;
+    hbng::Ext Kind;
     switch (AArch64_AM::getArithExtendType(Ext)) {
-    case AArch64_AM::UXTW: Kind = "uxtw"; break;
-    case AArch64_AM::SXTW: Kind = "sxtw"; break;
-    case AArch64_AM::UXTX: Kind = "uxtx"; break;
-    case AArch64_AM::SXTX: Kind = "sxtx"; break;
+    case AArch64_AM::UXTW: Kind = hbng::Ext::UXTW; break;
+    case AArch64_AM::SXTW: Kind = hbng::Ext::SXTW; break;
+    case AArch64_AM::UXTX: Kind = hbng::Ext::UXTX; break;
+    case AArch64_AM::SXTX: Kind = hbng::Ext::SXTX; break;
     default:
-      return Unsupported; // a byte or halfword extension
+      return T.unsupported(Unsupported); // a byte or halfword extension
     }
-    return "<SP> <- " + Rn + (W.IsSub ? " - " : " + ") + "ext(" +
-           valueOf(MI.getOperand(W.Rm).getReg()) + ", " + Kind + ", " +
-           std::to_string(AArch64_AM::getArithShiftValue(Ext)) + ")\n";
+    hbng::Term Rm = Terms.ext(termOf(MI.getOperand(W.Rm).getReg()), Kind,
+                              AArch64_AM::getArithShiftValue(Ext));
+    T.SP = W.IsSub ? Terms.sub(Rn, Rm) : Terms.add(Rn, Rm);
+    return;
   }
   }
 }
@@ -1017,9 +974,9 @@ std::string AArch64HBNGAnnotate::genSPWriteLine(MachineInstr &MI,
 // The address of a load or store: a term (the base's value, and a register
 // offset or LO12 added to it) and an offset in bytes. The address of a
 // post-indexed access is the base before the write-back.
-std::pair<std::string, int64_t>
+std::pair<hbng::Term, int64_t>
 AArch64HBNGAnnotate::genAddress(MachineInstr &MI, const HBNGMemAccess &A) {
-  std::string Base = valueOf(MI.getOperand(A.Base).getReg());
+  hbng::Term Base = termOf(MI.getOperand(A.Base).getReg());
   if (A.Offset < 0 || A.Mode == HBNGMemAccess::PostIndex)
     return {Base, 0};
   if (A.isRegOffset()) {
@@ -1028,37 +985,19 @@ AArch64HBNGAnnotate::genAddress(MachineInstr &MI, const HBNGMemAccess &A) {
       return {Base, 0}; // adds 0
     bool Signed = MI.getOperand(A.Offset + 1).getImm();
     bool DoShift = MI.getOperand(A.Offset + 2).getImm();
-    const char *Kind = A.Mode == HBNGMemAccess::RegOffsetW
-                           ? (Signed ? "sxtw" : "uxtw")
-                           : (Signed ? "sxtx" : "uxtx");
-    return {Base + " + ext(" + valueOf(Rm) + ", " + Kind + ", " +
-                std::to_string(DoShift ? Log2_32(A.Size) : 0) + ")",
+    hbng::Ext Kind = A.Mode == HBNGMemAccess::RegOffsetW
+                         ? (Signed ? hbng::Ext::SXTW : hbng::Ext::UXTW)
+                         : (Signed ? hbng::Ext::SXTX : hbng::Ext::UXTX);
+    return {Terms.add(Base, Terms.ext(termOf(Rm), Kind,
+                                      DoShift ? Log2_32(A.Size) : 0)),
             0};
   }
   const MachineOperand &Off = MI.getOperand(A.Offset);
   // A symbol's low 12 bits (":lo12:sym", ":got_lo12:sym"): the linker writes
   // the offset into the instruction, LO12 names it.
   if (!Off.isImm())
-    return {Base + " + LO12", 0};
+    return {Terms.add(Base, Terms.lo12()), 0};
   return {Base, Off.getImm() * (A.isScaledImm() ? int64_t(A.Size) : 1)};
-}
-
-// Size bytes of memory at Term + Off, or Times elements of Size bytes, Step
-// bytes apart.
-static std::string memBytes(const std::string &Term, int64_t Off,
-                            unsigned Size, unsigned Step = 0,
-                            unsigned Times = 0) {
-  std::string S = "M[" + plus(Term, Off);
-  if (Size > 1 || Times)
-    S += " .. +" + std::to_string(Size);
-  if (Times)
-    S += " step " + std::to_string(Step) + " times " + std::to_string(Times);
-  return S + "]";
-}
-
-// A call writes the return address, a constant, into LR.
-std::vector<std::string> AArch64HBNGAnnotate::genLinkAnnotation() {
-  return {"LR <- 0\n"};
 }
 
 // Annotations of a load or store: one line per data register, then the
@@ -1073,47 +1012,49 @@ std::vector<std::string> AArch64HBNGAnnotate::genLinkAnnotation() {
 // registers do not reach the data. The write-back leaves the tag of the base
 // unchanged (an immediate is added), so it needs a line only for a tracked
 // base, whose value it updates; any other base is sent at its next access.
-std::vector<std::string> AArch64HBNGAnnotate::genMemAnnotation(
-    MachineInstr &MI, const HBNGMemAccess &A) {
+hbng::Transfer AArch64HBNGAnnotate::genMemAnnotation(MachineInstr &MI,
+                                                     const HBNGMemAccess &A) {
   if (A.Vec != HBNGMemAccess::NotVec)
     return genVecMemAnnotation(MI, A);
-  std::vector<std::string> Annotations;
-  auto [Term, Off] = genAddress(MI, A);
+  hbng::Transfer T;
+  auto [Addr, Off] = genAddress(MI, A);
   for (unsigned I = 0; I < A.NumData; ++I) {
     Register Rt = getHBNGDataReg(MI, A, I, TRI);
-    std::string Mem = memBytes(Term, Off + I * A.Size, A.Size);
-    std::string Per = isFPR(Rt) ? " per 1" : "";
+    hbng::LocList Mem =
+        hbng::memBytes(Terms, Terms.plus(Addr, Off + I * A.Size), A.Size);
     if (!A.IsStore) {
-      for (std::string &L : writeReg(Rt, Mem + Per))
-        Annotations.push_back(L);
+      writeReg(T, Rt, Mem, isFPR(Rt));
       continue;
     }
-    std::optional<std::string> Src = srcLoc(Rt);
+    hbng::LocList Src = locsOf(Rt);
     if (A.Status < 0) {
-      Annotations.push_back(Mem + " <- " + (Src ? *Src + Per : "0") + "\n");
+      if (isFPR(Rt))
+        T.assignPer(Mem, {Src}, 1, 1);
+      else
+        T.assign(Mem, Src);
       continue;
     }
     // A store-exclusive may fail and leave memory as it was: each byte keeps
-    // its tag or takes the register's, one line per byte (a range on both
-    // sides would give every byte the tags of all of them). Storing the zero
+    // its tag or takes the register's (the same sources for all the bytes
+    // would give every byte the tags of all of them). Storing the zero
     // register keeps the bytes.
-    if (!Src)
+    if (Src.empty())
       continue;
-    for (unsigned B = 0; B < A.Size; ++B) {
-      std::string Byte = memBytes(Term, Off + I * A.Size + B, 1);
-      Annotations.push_back(Byte + " <- " + Byte + " | " + *Src + "\n");
+    for (const hbng::Loc &Byte : Mem) {
+      hbng::LocList Srcs = Src;
+      Srcs.push_back(Byte);
+      T.assign({Byte}, Srcs);
     }
   }
 
   Register Base = MI.getOperand(A.Base).getReg();
   if (isHBNGTrackedReg(Base))
     if (std::optional<int64_t> Bytes = getHBNGWritebackBytes(MI, A))
-      Annotations.push_back(genTrackedValueLine(Base, Base, *Bytes));
+      setTrackedValue(T, Base, Base, *Bytes);
 
   if (A.Status >= 0)
-    for (std::string &L : writeReg(MI.getOperand(A.Status).getReg(), "0"))
-      Annotations.push_back(L);
-  return Annotations;
+    writeReg(T, MI.getOperand(A.Status).getReg(), {});
+  return T;
 }
 
 // Annotations of a structured (NEON) load or store: one line per data
@@ -1125,45 +1066,48 @@ std::vector<std::string> AArch64HBNGAnnotate::genMemAnnotation(
 //   V0[8:11] <- M[<X0> .. +4] per 1                      ld1 {v0.s}[2]
 // A load of a 64-bit register clears its upper 8 bytes, a load of a lane
 // keeps the other bytes. The write-back by a register is not described.
-std::vector<std::string> AArch64HBNGAnnotate::genVecMemAnnotation(
-    MachineInstr &MI, const HBNGMemAccess &A) {
-  std::vector<std::string> Annotations;
-  auto [Term, Off] = genAddress(MI, A);
+hbng::Transfer
+AArch64HBNGAnnotate::genVecMemAnnotation(MachineInstr &MI,
+                                         const HBNGMemAccess &A) {
+  hbng::Transfer T;
+  auto [Addr, Off] = genAddress(MI, A);
   unsigned E = A.ElemSize, N = A.RegBytes / E;
   for (unsigned I = 0; I < A.NumData; ++I) {
     Register Rt = getHBNGDataReg(MI, A, I, TRI);
-    std::string Mem, Reg = vecRange(Rt, 0, A.RegBytes);
+    unsigned V = TRI->getEncodingValue(Rt);
+    hbng::LocList Mem, Reg = hbng::vBytes(V, 0, A.RegBytes);
     switch (A.Vec) {
     case HBNGMemAccess::NotVec:
       llvm_unreachable("HBNG: not a structured access");
     case HBNGMemAccess::VecMultiple:
-      Mem = memBytes(Term, Off + I * A.RegBytes, A.RegBytes);
+      Mem = hbng::memBytes(Terms, Terms.plus(Addr, Off + I * A.RegBytes),
+                           A.RegBytes);
       break;
     case HBNGMemAccess::VecInterleaved:
-      Mem = memBytes(Term, Off + I * E, E, A.NumData * E, N);
+      Mem = hbng::memBytes(Terms, Terms.plus(Addr, Off + I * E), E,
+                           A.NumData * E, N);
       break;
     case HBNGMemAccess::VecReplicate:
-      Mem = memBytes(Term, Off + I * E, E, 0, N);
+      Mem = hbng::memBytes(Terms, Terms.plus(Addr, Off + I * E), E, 0, N);
       break;
     case HBNGMemAccess::VecLane:
-      Mem = memBytes(Term, Off + I * E, E);
-      Reg = vecRange(Rt, MI.getOperand(A.Lane).getImm() * E, E);
+      Mem = hbng::memBytes(Terms, Terms.plus(Addr, Off + I * E), E);
+      Reg = hbng::vBytes(V, MI.getOperand(A.Lane).getImm() * E, E);
       break;
     }
     if (A.IsStore)
-      Annotations.push_back(Mem + " <- " + Reg + " per 1\n");
+      T.assignPer(Mem, {Reg}, 1, 1);
     else if (A.Vec == HBNGMemAccess::VecLane)
-      Annotations.push_back(Reg + " <- " + Mem + " per 1\n");
+      T.assignPer(Reg, {Mem}, 1, 1);
     else
-      for (std::string &L : writeReg(Rt, Mem + " per 1"))
-        Annotations.push_back(L);
+      writeReg(T, Rt, Mem, true);
   }
 
   Register Base = MI.getOperand(A.Base).getReg();
   if (isHBNGTrackedReg(Base))
     if (std::optional<int64_t> Bytes = getHBNGWritebackBytes(MI, A))
-      Annotations.push_back(genTrackedValueLine(Base, Base, *Bytes));
-  return Annotations;
+      setTrackedValue(T, Base, Base, *Bytes);
+  return T;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1175,7 +1119,7 @@ std::vector<std::string> AArch64HBNGAnnotate::genVecMemAnnotation(
 // FP is never sent as an address (it is tracked): a send of x29 follows a
 // write of FP whose value the annotations cannot compute, and gives it.
 // A send pseudo sends its register, or a pair its two, in its order.
-std::vector<std::string> AArch64HBNGAnnotate::genSendLines(MachineInstr &MI) {
+hbng::Transfer AArch64HBNGAnnotate::genSends(MachineInstr &MI) {
   SmallVector<Register, 2> Regs;
   if (isHBNGSendPseudo(MI)) {
     Regs = getHBNGSendPseudoRegs(MI);
@@ -1184,15 +1128,13 @@ std::vector<std::string> AArch64HBNGAnnotate::genSendLines(MachineInstr &MI) {
     for (unsigned I = A->NumData; I-- > 0;)
       Regs.push_back(getHBNGDataReg(MI, *A, I, TRI));
   }
-  std::vector<std::string> Lines;
-  bool SendsFP = false;
+  hbng::Transfer T;
   for (Register R : Regs) {
-    Lines.push_back("send X" + std::to_string(TRI->getEncodingValue(R)) + "\n");
-    SendsFP |= R == AArch64::FP;
+    T.Sends.push_back(TRI->getEncodingValue(R));
+    if (R == AArch64::FP)
+      T.FP = Terms.reg(29);
   }
-  if (SendsFP)
-    Lines.push_back("<FP> <- <X29>\n");
-  return Lines;
+  return T;
 }
 
 // Inline asm, one group per instruction: svc for a system call; any other
@@ -1202,46 +1144,54 @@ std::vector<std::string> AArch64HBNGAnnotate::genSendLines(MachineInstr &MI) {
 // msr and barriers annotate nothing, and mrs gives a clean value when the
 // statement is the whole asm and has one output register (otherwise which
 // output it writes is not known here).
-std::vector<std::vector<std::string>>
+std::vector<hbng::Transfer>
 AArch64HBNGAnnotate::genInlineAsmGroups(MachineInstr &MI) {
   SmallVector<std::string, 4> Mnemonics = getInlineAsmMnemonics(MI);
   SmallVector<Register, 2> Outs;
   for (const MachineOperand &MO : MI.operands())
     if (MO.isReg() && MO.isDef() && !MO.isImplicit()) // not a clobber
       Outs.push_back(MO.getReg());
-  std::vector<std::vector<std::string>> Groups;
-  for (const std::string &Mnemonic : Mnemonics) {
+  std::vector<hbng::Transfer> Groups(Mnemonics.size());
+  for (auto [Mnemonic, T] : zip(Mnemonics, Groups)) {
     if (Mnemonic == "svc")
-      Groups.push_back({"svc\n"});
-    else if (is_contained({"msr", "dmb", "dsb", "isb", "nop"}, Mnemonic))
-      Groups.push_back({});
+      T.Opaque = hbng::Transfer::Svc;
     else if (Mnemonic == "mrs" && Mnemonics.size() == 1 && Outs.size() == 1)
-      Groups.push_back(writeReg(Outs[0], "0"));
-    else
-      Groups.push_back({"unsupported \"INLINEASM " + Mnemonic + "\"\n"});
+      writeReg(T, Outs[0], {});
+    else if (!is_contained({"msr", "dmb", "dsb", "isb", "nop"}, Mnemonic))
+      T.unsupported("INLINEASM " + Mnemonic);
   }
   return Groups;
 }
 
-std::vector<std::vector<std::string>>
+// Adds to Into what From writes, From writing none of the same locations.
+static void merge(hbng::Transfer &Into, hbng::Transfer &&From) {
+  Into.Deps.insert(From.Deps.begin(), From.Deps.end());
+  if (From.SP)
+    Into.SP = From.SP;
+  if (From.FP)
+    Into.FP = From.FP;
+  Into.Sends.append(From.Sends.begin(), From.Sends.end());
+}
+
+std::vector<hbng::Transfer>
 AArch64HBNGAnnotate::generateGroups(MachineInstr &MI) {
   if (MI.isMetaInstruction() || MI.getOpcode() == AArch64::HBNG_ATOM_LABEL)
     return {};
   if (MI.isInlineAsm()) {
-    std::vector<std::vector<std::string>> Groups = genInlineAsmGroups(MI);
+    std::vector<hbng::Transfer> Groups = genInlineAsmGroups(MI);
     // The tracked registers it writes are known once the statement is done.
-    std::vector<std::string> Values = genTrackedLines(MI);
+    hbng::Transfer Values = genTrackedValues(MI);
     if (!Groups.empty() && !Values.empty()) {
-      if (isUnsupported(Values))
-        Groups.back() = Values;
-      else if (!isUnsupported(Groups.back()))
-        Groups.back().insert(Groups.back().end(), Values.begin(), Values.end());
+      if (Values.isOpaque())
+        Groups.back() = std::move(Values);
+      else if (Groups.back().Opaque != hbng::Transfer::Unsupported)
+        merge(Groups.back(), std::move(Values));
     }
     return Groups;
   }
   // The sends are not part of the program: the coprocessor receives them.
   if (isHBNGSend(MI))
-    return {genSendLines(MI)};
+    return {genSends(MI)};
   switch (MI.getOpcode()) {
   // The jump-table dispatch, operands (dst, scratch, table, index), is
   // emitted as three instructions, one group each:
@@ -1257,8 +1207,11 @@ AArch64HBNGAnnotate::generateGroups(MachineInstr &MI) {
   case AArch64::JumpTableDest8: {
     Register Dst = MI.getOperand(0).getReg();
     Register Scratch = MI.getOperand(1).getReg();
-    return {writeReg(Dst, "0"), writeReg(Scratch, "0"),
-            writeReg(Dst, unionOf({*gprLoc(Dst), *gprLoc(Scratch)}))};
+    std::vector<hbng::Transfer> Groups(3);
+    writeReg(Groups[0], Dst, {});
+    writeReg(Groups[1], Scratch, {});
+    writeReg(Groups[2], Dst, {locsOf(Dst)[0], locsOf(Scratch)[0]});
+    return Groups;
   }
   // No instruction (their size is the default of 4): .cfi_b_key_frame, and
   // a register left undefined.
@@ -1281,61 +1234,59 @@ AArch64HBNGAnnotate::generateGroups(MachineInstr &MI) {
     return {generateAnnotation(MI)};
   // A pseudo expanded at emission into several instructions: its size is an
   // upper bound, so the groups may not line up with the code.
-  std::vector<std::vector<std::string>> Groups(Size / 4);
-  Groups[0] = {"unsupported \"" + TII->getName(MI.getOpcode()).str() + "\"\n"};
+  std::vector<hbng::Transfer> Groups(Size / 4);
+  Groups[0].unsupported(TII->getName(MI.getOpcode()));
   return Groups;
 }
 
-// The annotations of MI: its tag lines (generateTagAnnotation), then the
-// values of the tracked registers it writes (SP, FP, see isHBNGTrackedReg):
+// The annotation of MI: the dependencies it writes (generateTagAnnotation),
+// then the values of the tracked registers it writes (SP, FP, see
+// isHBNGTrackedReg):
 //   <Dst> <- <Src> + b                immediate update from a tracked register
 //   <SP> <- <Rn> + b                  any other write of SP, from sent sources
 //   <SP> <- <Rn> +|- ext(<Rm>, e, s)  (sent before MI unless tracked)
 //   <SP> <- (<Rn> & mask)
 // with b in bytes (negative for SUB). Any other write of FP sends its value
-// right after MI, and that send's group gives it (genSendLines). The
+// right after MI, and that send's group gives it (genSends). The
 // write-back of an access based on a tracked register is described with the
-// access (genMemAnnotation). An unsupported line stands alone in its group.
-std::vector<std::string> AArch64HBNGAnnotate::generateAnnotation(MachineInstr &MI) {
-  std::vector<std::string> Annotations = generateTagAnnotation(MI);
-  std::vector<std::string> Values = genTrackedLines(MI);
-  if (isUnsupported(Annotations))
-    return Annotations;
-  if (isUnsupported(Values))
-    return Values;
-  Annotations.insert(Annotations.end(), Values.begin(), Values.end());
-  return Annotations;
+// access (genMemAnnotation). An unsupported statement replaces everything
+// else.
+hbng::Transfer AArch64HBNGAnnotate::generateAnnotation(MachineInstr &MI) {
+  hbng::Transfer T = generateTagAnnotation(MI);
+  hbng::Transfer Values = genTrackedValues(MI);
+  if (T.Opaque == hbng::Transfer::Unsupported)
+    return T;
+  if (Values.isOpaque())
+    return std::move(Values);
+  merge(T, std::move(Values));
+  return T;
 }
 
-bool AArch64HBNGAnnotate::isUnsupported(ArrayRef<std::string> Lines) {
-  return any_of(Lines, [](const std::string &L) {
-    return StringRef(L).starts_with("unsupported ");
-  });
-}
-
-// The lines of the tracked registers MI writes (see generateAnnotation).
-std::vector<std::string> AArch64HBNGAnnotate::genTrackedLines(MachineInstr &MI) {
-  std::vector<std::string> Annotations;
+// The values of the tracked registers MI writes (see generateAnnotation).
+hbng::Transfer AArch64HBNGAnnotate::genTrackedValues(MachineInstr &MI) {
+  hbng::Transfer T;
   if (std::optional<HBNGTrackedUpdate> U = getHBNGTrackedImmUpdate(MI))
-    Annotations.push_back(genTrackedValueLine(U->Dst, U->Src, U->Imm));
+    setTrackedValue(T, U->Dst, U->Src, U->Imm);
   if (std::optional<HBNGSPWrite> W = getHBNGSPWrite(MI, TRI))
-    Annotations.push_back(genSPWriteLine(MI, *W));
-  return Annotations;
+    genSPWrite(T, MI, *W);
+  return T;
 }
 
-std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr &MI) {
-  std::vector<std::string> Annotations = {};
+hbng::Transfer AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr &MI) {
+  hbng::Transfer T;
+  Register Rd = MI.getNumOperands() && MI.getOperand(0).isReg()
+                    ? MI.getOperand(0).getReg()
+                    : Register();
 
-  std::string Unsupported =
-      "unsupported \"" + TII->getName(MI.getOpcode()).str() + "\"";
-
-  if (TII->isGPRZero(MI) || cancelsItsSource(MI))
-    return genClear(MI);
+  if (TII->isGPRZero(MI) || cancelsItsSource(MI)) {
+    genClear(T, MI);
+    return T;
+  }
 
   if (std::optional<HBNGMemAccess> A = getHBNGMemAccess(MI))
     return genMemAnnotation(MI, *A);
 
-  if (std::optional<std::vector<std::string>> V = genNeonAnnotation(MI))
+  if (std::optional<hbng::Transfer> V = genNeonAnnotation(MI))
     return *V;
 
   switch (MI.getOpcode()) {
@@ -1352,59 +1303,59 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::FRINTPSr: case AArch64::FRINTPDr:
     case AArch64::FRINTXSr: case AArch64::FRINTXDr:
     case AArch64::FRINTZSr: case AArch64::FRINTZDr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     // Two registers
     case AArch64::ADDXrr: case AArch64::ADDXrx: case AArch64::ADDXrs:
     case AArch64::ADDWrr: case AArch64::ADDWrx: case AArch64::ADDWrs:
     case AArch64::ADDXrx64:
     case AArch64::FADDSrr: case AArch64::FADDDrr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     case AArch64::SUBXrr: case AArch64::SUBXrx: case AArch64::SUBXrs:
     case AArch64::SUBWrr: case AArch64::SUBWrx: case AArch64::SUBWrs:
     case AArch64::SUBXrx64:
     case AArch64::FSUBDrr: case AArch64::FSUBSrr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     case AArch64::ADDSXrr: case AArch64::ADDSXrx: case AArch64::ADDSXrs:
     case AArch64::ADDSWrr: case AArch64::ADDSWrx: case AArch64::ADDSWrs:
     case AArch64::ADDSXrx64:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     case AArch64::SUBSXrr: case AArch64::SUBSXrx: case AArch64::SUBSXrs:
     case AArch64::SUBSWrr: case AArch64::SUBSWrx: case AArch64::SUBSWrs:
     case AArch64::SUBSXrx64:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     case AArch64::ADCSXr: case AArch64::ADCSWr:
     case AArch64::SBCSXr: case AArch64::SBCSWr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     case AArch64::ADCXr: case AArch64::ADCWr:
     case AArch64::SBCXr: case AArch64::SBCWr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     case AArch64::UMULHrr: case AArch64::SMULHrr:
     case AArch64::FMULSrr: case AArch64::FMULDrr:
     case AArch64::FNMULSrr: case AArch64::FNMULDrr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     // Register and Immediate
     case AArch64::ADDXri: case AArch64::ADDWri:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     case AArch64::SUBXri: case AArch64::SUBWri:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     case AArch64::ADDSXri: case AArch64::ADDSWri:
     case AArch64::SUBSXri: case AArch64::SUBSWri:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     case AArch64::UDIVWr: case AArch64::UDIVXr:
     case AArch64::SDIVWr: case AArch64::SDIVXr:
     case AArch64::FDIVSrr: case AArch64::FDIVDrr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     // Three registers
     case AArch64::MADDWrrr: case AArch64::MADDXrrr:
@@ -1415,7 +1366,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::FNMADDHrrr: case AArch64::FNMADDSrrr: case AArch64::FNMADDDrrr:
     case AArch64::FMSUBHrrr: case AArch64::FMSUBSrrr: case AArch64::FMSUBDrrr:
     case AArch64::FNMSUBHrrr: case AArch64::FNMSUBSrrr: case AArch64::FNMSUBDrrr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
 
     //=== FP MINIMUM AND MAXIMUM ===//
@@ -1424,7 +1375,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::FMINNMSrr: case AArch64::FMINNMDrr:
     case AArch64::FMAXSrr: case AArch64::FMAXDrr:
     case AArch64::FMINSrr: case AArch64::FMINDrr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
 
     //=== FP CONVERSION ===//
@@ -1453,15 +1404,15 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::SCVTFUXHri: case AArch64::SCVTFUXSri: case AArch64::SCVTFUXDri:
     case AArch64::UCVTFUWHri: case AArch64::UCVTFUWSri: case AArch64::UCVTFUWDri:
     case AArch64::UCVTFUXHri: case AArch64::UCVTFUXSri: case AArch64::UCVTFUXDri:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
 
     //=== ADDR COMPUTATION ===//
     case AArch64::ADR:
-      Annotations = genClear(MI);
+      genClear(T, MI);
       break;
     case AArch64::ADRP:
-      Annotations = genClear(MI);
+      genClear(T, MI);
       break;
     //=== LOGICAL ===//
     // reg
@@ -1475,78 +1426,74 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::EORWri: case AArch64::EORXri:
     case AArch64::ORRXri: case AArch64::ORRWri:
     case AArch64::ANDXri: case AArch64::ANDWri:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     case AArch64::ANDSXrr: case AArch64::ANDSXrs: case AArch64::ANDSWrr: case AArch64::ANDSWrs:
     case AArch64::BICSXrr: case AArch64::BICSXrs: case AArch64::BICSWrr: case AArch64::BICSWrs:
     case AArch64::ANDSXri: case AArch64::ANDSWri:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     //=== SHIFTS ===//
     case AArch64::ASRVWr: case AArch64::ASRVXr:
     case AArch64::LSRVWr: case AArch64::LSRVXr:
     case AArch64::LSLVWr: case AArch64::LSLVXr:
     case AArch64::RORVWr: case AArch64::RORVXr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     //=== MOVES ===//
     // Partial move
     case AArch64::MOVKWi: case AArch64::MOVKXi:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     // Total move
     case AArch64::MOVNWi: case AArch64::MOVNXi:
     case AArch64::MOVZXi: case AArch64::MOVZWi:
     case AArch64::MOVID: case AArch64::FMOVSi: case AArch64::FMOVDi:
     case AArch64::FMOVHi:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     // Zero
     case AArch64::FMOVS0: case AArch64::FMOVD0: case AArch64::FMOVH0:
-      Annotations = genClear(MI);
+      genClear(T, MI);
       break;
     // Register move: between FP/SIMD registers byte for byte ("per 1"), the
     // bytes above the scalar cleared; to or from a W/X register, its one tag.
     case AArch64::FMOVDr: case AArch64::FMOVSr: case AArch64::FMOVHr:
-      Annotations = writeReg(MI.getOperand(0).getReg(),
-                             vecWhole(MI.getOperand(1).getReg()) + " per 1");
+      writeReg(T, Rd, locsOf(MI.getOperand(1).getReg()), true);
       break;
     // A named register read (llvm.read_register, __getReg): mov Xt, Xn or
     // fmov Dt, Dn, the source register held in an immediate operand.
     case AArch64::READ_REGISTER_GPR64:
-      Annotations =
-          writeReg(MI.getOperand(0).getReg(),
-                   gprLoc(MI.getOperand(1).getImm()).value_or("0"));
+      writeReg(T, Rd, locsOf(MI.getOperand(1).getImm()));
       break;
     case AArch64::READ_REGISTER_FPR64:
-      Annotations = writeReg(MI.getOperand(0).getReg(),
-                             vecWhole(MI.getOperand(1).getImm()) + " per 1");
+      writeReg(T, Rd, locsOf(MI.getOperand(1).getImm()), true);
       break;
     case AArch64::FMOVDXr: case AArch64::FMOVXDr:
     case AArch64::FMOVSWr: case AArch64::FMOVWSr:
     case AArch64::FMOVHWr: case AArch64::FMOVHXr:
     case AArch64::FMOVWHr: case AArch64::FMOVXHr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     // The upper half of a V register from or to an X register; the lower
     // half is kept: (Rd, Rn, idx).
     case AArch64::FMOVXDHighr:
-      Annotations.push_back(vecRange(MI.getOperand(0).getReg(), 8, 8) + " <- " +
-                            *gprLoc(MI.getOperand(1).getReg()) + "\n");
+      T.assign(hbng::vBytes(TRI->getEncodingValue(Rd), 8, 8),
+               locsOf(MI.getOperand(1).getReg()));
       break;
     case AArch64::FMOVDXHighr:
-      Annotations = writeReg(MI.getOperand(0).getReg(),
-                             vecRange(MI.getOperand(1).getReg(), 8, 8));
+      writeReg(T, Rd,
+               hbng::vBytes(TRI->getEncodingValue(MI.getOperand(1).getReg()),
+                            8, 8));
       break;
     // Scalar copy of a lane (also written MOV): (Rd, Vn, idx), byte for byte
     // ("per 1"), the bytes above the scalar cleared.
     case AArch64::DUPi8: case AArch64::DUPi16:
     case AArch64::DUPi32: case AArch64::DUPi64: {
-      unsigned E = regBytes(MI.getOperand(0).getReg());
-      Register Rn = MI.getOperand(1).getReg();
-      Annotations = writeReg(MI.getOperand(0).getReg(),
-                             vecRange(Rn, MI.getOperand(2).getImm() * E, E) +
-                                 " per 1");
+      unsigned E = regBytes(Rd);
+      unsigned Rn = TRI->getEncodingValue(MI.getOperand(1).getReg());
+      writeReg(T, Rd, hbng::vBytes(Rn, MI.getOperand(2).getImm() * E, E),
+               true);
       break;
     }
     // CRC32 (and CRC32C): the new checksum from the old one and the data.
@@ -1554,7 +1501,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::CRC32Wrr: case AArch64::CRC32Xrr:
     case AArch64::CRC32CBrr: case AArch64::CRC32CHrr:
     case AArch64::CRC32CWrr: case AArch64::CRC32CXrr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     // AES and SHA (+aes, +sha2): every byte written from every byte read,
     // the old destination included when it is a source (aese, sha256h).
@@ -1565,14 +1512,14 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::SHA1SU0rrr: case AArch64::SHA1SU1rr:
     case AArch64::SHA256Hrrr: case AArch64::SHA256H2rrr:
     case AArch64::SHA256SU0rr: case AArch64::SHA256SU1rrr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     //=== BITMANIP ===//
     case AArch64::SBFMXri: case AArch64::SBFMWri:
     case AArch64::UBFMXri: case AArch64::UBFMWri:
     case AArch64::BFMWri: case AArch64::BFMXri:
     case AArch64::EXTRWrri: case AArch64::EXTRXrri:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
 
     // Bit count and reverse
@@ -1581,7 +1528,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::RBITWr: case AArch64::RBITXr:
     case AArch64::REVWr: case AArch64::REVXr:
     case AArch64::REV16Wr: case AArch64::REV16Xr: case AArch64::REV32Xr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
     //=== BRANCHES ===//
     // No tag flows into PC (see "Specific annotation functions"); the block
@@ -1594,7 +1541,8 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::TCRETURNrix16x17: case AArch64::TCRETURNrix17: case AArch64::TCRETURNrinotx16:
       break;
     case AArch64::BL: case AArch64::BLR:
-      Annotations = genLinkAnnotation();
+      // The return address, a constant, into LR.
+      T.assign({hbng::Loc::x(30)}, {});
       break;
 
     //=== CONDITIONAL OPERATIONS ===//
@@ -1602,7 +1550,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::CSELWr: case AArch64::CSELXr: case AArch64::CSINCWr: case AArch64::CSINCXr:
     case AArch64::CSINVWr: case AArch64::CSINVXr: case AArch64::CSNEGWr: case AArch64::CSNEGXr:
     case AArch64::FCSELSrrr: case AArch64::FCSELDrrr:
-      Annotations = genDataflow(MI);
+      genDataflow(T, MI);
       break;
 
     //=== COMPARISONS ===//
@@ -1618,7 +1566,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     // A system register carries no tag (like the flags): its value is not
     // data the program read or received (thread pointer, FPCR/FPSR, counters).
     case AArch64::MRS: case AArch64::MRS_FPCR:
-      Annotations = genClear(MI);
+      genClear(T, MI);
       break;
     // Writing one drops the tag (NZCV saved and restored around a call too).
     case AArch64::MSR: case AArch64::MSR_FPCR:
@@ -1628,7 +1576,7 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     case AArch64::MSRpstateImm4: {
       unsigned Field = MI.getOperand(0).getImm();
       if (Field != AArch64PState::DAIFSet && Field != AArch64PState::DAIFClr)
-        Annotations.push_back(Unsupported + "\n");
+        T.unsupported(TII->getName(MI.getOpcode()));
       break;
     }
     // Barriers, hints and prefetches move no data.
@@ -1658,23 +1606,24 @@ std::vector<std::string> AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr
     // pointer and the modifier (SP, X16 or none).
     case AArch64::PACIASP: case AArch64::PACIBSP:
     case AArch64::AUTIASP: case AArch64::AUTIBSP:
-      Annotations = {"LR <- LR | SP\n"};
+      T.assign({hbng::Loc::x(30)}, {hbng::Loc::x(30), hbng::Loc::sp()});
       break;
     case AArch64::PACIAZ: case AArch64::PACIBZ:
     case AArch64::AUTIAZ: case AArch64::AUTIBZ:
     case AArch64::XPACLRI:
-      Annotations = {"LR <- LR\n"};
+      break; // LR <- LR
       break;
     case AArch64::PACIA1716: case AArch64::PACIB1716:
     case AArch64::AUTIA1716: case AArch64::AUTIB1716:
-      Annotations = {"X17 <- X17 | X16\n"};
+      T.assign({hbng::Loc::x(17)}, {hbng::Loc::x(17), hbng::Loc::x(16)});
       break;
     default:
-      Annotations.push_back(Unsupported + "\n");
-      LLVM_DEBUG(dbgs() << Unsupported << "\n");
+      T.unsupported(TII->getName(MI.getOpcode()));
+      LLVM_DEBUG(dbgs() << "unsupported " << TII->getName(MI.getOpcode())
+                        << "\n");
       break;
   }
-  return Annotations;
+  return T;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1725,7 +1674,7 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
       unsigned SplitIndex = 0;
       // The byte offset of the next instruction in the current block.
       unsigned Offset = 0;
-      // A block's text is its groups, "@<offset>" and the lines of the
+      // A block's text is its groups, "@<offset>" and the statements of the
       // instruction at that offset, closed by END. A block with no
       // instruction (only pseudos that emit nothing) has no text: the block
       // table leaves it out (see emitHBNGBasicBlockTableSection).
@@ -1741,16 +1690,17 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
         unsigned int Opcode = MI.getOpcode();
         StringRef Mnemonic = TII->getName(Opcode);
         LLVM_DEBUG(dbgs() << "instr: " << Mnemonic << "\n");
-        for (std::vector<std::string> &Group : generateGroups(MI)) {
+        for (hbng::Transfer &T : generateGroups(MI)) {
           BBAnnotationInfo.Annotations.push_back("@" + std::to_string(Offset) +
                                                  "\n");
-          size_t First = BBAnnotationInfo.Annotations.size();
-          for (const std::string &Lines : Group)
-            appendChangingLines(BBAnnotationInfo.Annotations, Lines);
-          // One FIFO entry per send line, at this group's index.
-          for (size_t I = First; I < BBAnnotationInfo.Annotations.size(); ++I)
-            if (StringRef(BBAnnotationInfo.Annotations[I]).starts_with("send "))
-              BBAnnotationInfo.SendIndices.push_back(Offset / 4);
+          std::string Statements = hbng::printTransfer(Terms, T);
+          SmallVector<StringRef, 8> Lines;
+          StringRef(Statements).split(Lines, '\n', -1, false);
+          for (StringRef Line : Lines)
+            BBAnnotationInfo.Annotations.push_back((Line + "\n").str());
+          // One channel entry per send, at this group's index.
+          for (size_t I = 0; I < T.Sends.size(); ++I)
+            BBAnnotationInfo.SendIndices.push_back(Offset / 4);
           Offset += 4;
         }
 
@@ -1795,6 +1745,7 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
       Close();
     }
 
+    Terms.clear();
     // Notify if the content has changed
     return false;
 }
