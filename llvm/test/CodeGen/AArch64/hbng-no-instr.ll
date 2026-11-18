@@ -37,6 +37,10 @@ exit:
 ; CHECK:       .section .hbngbbt
 ; CHECK-NEXT:  .xword HBNG_user
 ; CHECK-NEXT:  .xword HBNG_user_annot
+; CHECK-NEXT:  .hword 3
+; CHECK-NEXT:  .hword 1
+; CHECK-NEXT:  .hword 0
+; CHECK-NEXT:  .p2align 3
 ; CHECK-NOT:   HBNG_start_c
 define i64 @user(ptr %p) {
   %v = load i64, ptr %p

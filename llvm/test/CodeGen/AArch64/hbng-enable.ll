@@ -19,6 +19,12 @@
 ; ON-NEXT:     ldr x0, [x0]
 ; ON:          .section .hbngannot
 ; ON:          .section .hbngbbt
+; ON-NEXT:     .xword HBNG_load
+; ON-NEXT:     .xword HBNG_load_annot
+; ON-NEXT:     .hword 3
+; ON-NEXT:     .hword 1
+; ON-NEXT:     .hword 0
+; ON-NEXT:     .p2align 3
 
 ; ERR: HBNG: x18 holds the STM address and must be reserved (-ffixed-x18), in function 'load'
 

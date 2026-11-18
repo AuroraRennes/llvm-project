@@ -1201,6 +1201,16 @@ void AArch64AsmPrinter::emitHBNGBasicBlockTableSection() {
       LLVM_DEBUG(dbgs() << "Annotation Symbol: " << AnnotSym->getName() << " is defined: " << AnnotSym->isDefined() << "\n");
       OutStreamer->emitValue(MCSymbolRefExpr::create(Sym, OutContext), 8);
       OutStreamer->emitValue(MCSymbolRefExpr::create(AnnotSym, OutContext), 8);
+      // Instruction count, FIFO entry count and the instruction index of each
+      // entry, 16 bits each, padded to 8 bytes.
+      if (AnnotationInfo.NumInstrs > UINT16_MAX)
+        report_fatal_error("HBNG: block " + Sym->getName() +
+                           " too long for the block table");
+      OutStreamer->emitIntValue(AnnotationInfo.NumInstrs, 2);
+      OutStreamer->emitIntValue(AnnotationInfo.SendIndices.size(), 2);
+      for (unsigned Idx : AnnotationInfo.SendIndices)
+        OutStreamer->emitIntValue(Idx, 2);
+      OutStreamer->emitValueToAlignment(Align(8));
     }
   }
 }

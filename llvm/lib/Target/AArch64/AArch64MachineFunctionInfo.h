@@ -50,10 +50,15 @@ enum class SignReturnAddress {
 //      (1) BBSymbol:      the symbol of the basic block
 //      (2) BBAnnotSymbol: the corresponding symbol in the annotations
 //      (3) Annotations:   the annotations themselves
+//      (4) NumInstrs:     the number of instructions in the block
+//      (5) SendIndices:   the index of the instruction of each FIFO entry, in
+//                         channel order (twice for an stp)
 struct HBNGAnnotationInfo {
   MCSymbol *BBSymbol;
   MCSymbol *BBAnnotSymbol;
   std::vector<std::string> Annotations;
+  unsigned NumInstrs = 0;
+  std::vector<unsigned> SendIndices;
 };
 
 /// AArch64FunctionInfo - This class is derived from MachineFunctionInfo and

@@ -1732,6 +1732,7 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
       auto Close = [&] {
         if (Offset)
           BBAnnotationInfo.Annotations.push_back("END\n");
+        BBAnnotationInfo.NumInstrs = Offset / 4;
         FI->BBAnnotationInfos.push_back(BBAnnotationInfo);
       };
 
@@ -1743,8 +1744,13 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
         for (std::vector<std::string> &Group : generateGroups(MI)) {
           BBAnnotationInfo.Annotations.push_back("@" + std::to_string(Offset) +
                                                  "\n");
+          size_t First = BBAnnotationInfo.Annotations.size();
           for (const std::string &Lines : Group)
             appendChangingLines(BBAnnotationInfo.Annotations, Lines);
+          // One FIFO entry per send line, at this group's index.
+          for (size_t I = First; I < BBAnnotationInfo.Annotations.size(); ++I)
+            if (StringRef(BBAnnotationInfo.Annotations[I]).starts_with("send "))
+              BBAnnotationInfo.SendIndices.push_back(Offset / 4);
           Offset += 4;
         }
 
@@ -1775,6 +1781,8 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
           BBAnnotationInfo.BBSymbol = SplitBBSym;
           BBAnnotationInfo.BBAnnotSymbol = SplitAnnotSym;
           BBAnnotationInfo.Annotations = {};
+          BBAnnotationInfo.NumInstrs = 0;
+          BBAnnotationInfo.SendIndices.clear();
           Offset = 0;
 
           LLVM_DEBUG(dbgs() << "Splitting the block, resetting info with: " << SplitBBSym->getName() << " and " << SplitAnnotSym->getName() << "\n");
