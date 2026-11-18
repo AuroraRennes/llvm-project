@@ -181,6 +181,15 @@ struct Transfer {
   }
 };
 
+// A group's transfer and the X registers its instruction overwrites (bit n
+// for Xn), which the transfer doesn't say: an identity write has no entry,
+// nor have registers the annotations don't track. An instruction with several
+// groups puts its writes on the last one.
+struct Group {
+  Transfer T;
+  uint32_t Writes = 0;
+};
+
 // The statements of a transfer, one per line ("...\n" each).
 std::string printTransfer(const TermPool &Pool, const Transfer &T);
 

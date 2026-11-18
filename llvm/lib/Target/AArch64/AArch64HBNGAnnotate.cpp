@@ -59,6 +59,7 @@ public:
     // The groups of MI, one per instruction it is encoded as (none for a
     // pseudo that emits nothing), each the transfer of that instruction.
     std::vector<hbng::Transfer> generateGroups(MachineInstr &MI);
+    uint32_t gprWrites(MachineInstr &MI);
     std::vector<hbng::Transfer> genInlineAsmGroups(MachineInstr &MI);
     hbng::Transfer genSends(MachineInstr &MI);
     // The transfer of an instruction encoded as one instruction.
@@ -1629,6 +1630,27 @@ hbng::Transfer AArch64HBNGAnnotate::generateTagAnnotation(MachineInstr &MI) {
 //===----------------------------------------------------------------------===//
 // Main loop
 
+// The X registers (bit n for Xn) an instruction writes, write-backs included,
+// a W register as its X: a call writes x0-x17 and x30, a system call x0.
+uint32_t AArch64HBNGAnnotate::gprWrites(MachineInstr &MI) {
+  uint32_t Writes = 0;
+  if (MI.isCall())
+    Writes |= ((1u << 18) - 1) | (1u << 30);
+  if (containsSVC(MI))
+    Writes |= 1;
+  for (const MachineOperand &MO : MI.operands()) {
+    if (!MO.isReg() || !MO.isDef() || !MO.getReg().isPhysical())
+      continue;
+    Register R = MO.getReg();
+    if (R == AArch64::XZR || R == AArch64::WZR)
+      continue;
+    if (AArch64::GPR64RegClass.contains(R) ||
+        AArch64::GPR32RegClass.contains(R))
+      Writes |= 1u << TRI->getEncodingValue(R);
+  }
+  return Writes;
+}
+
 bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
     LLVM_DEBUG(dbgs() << "***** HBNG Annotations *****\n");
 
@@ -1651,10 +1673,10 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
     AArch64FunctionInfo *FI = MF.getInfo<AArch64FunctionInfo>();
 
     LLVM_DEBUG(dbgs() << "func: " << MF.getName() << "\n");
-    // Each block's transfers, one per instruction, with the block's index in
+    // Each block's groups, one per instruction, with the block's index in
     // BBAnnotationInfos. Nothing is printed before the whole function is
     // built, so that later steps can work across its blocks.
-    std::vector<std::pair<size_t, std::vector<hbng::Transfer>>> Blocks;
+    std::vector<std::pair<size_t, std::vector<hbng::Group>>> Blocks;
     for (auto &MBB : MF) {
       LLVM_DEBUG(dbgs() << "bblock: " << MBB.getName() << "\n");
       // Get the symbol of the basic block
@@ -1676,8 +1698,8 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
 
 
       unsigned SplitIndex = 0;
-      // The current block's transfers, one per instruction.
-      std::vector<hbng::Transfer> Groups;
+      // The current block's groups, one per instruction.
+      std::vector<hbng::Group> Groups;
       auto Close = [&] {
         BBAnnotationInfo.NumInstrs = Groups.size();
         Blocks.push_back({FI->BBAnnotationInfos.size(), std::move(Groups)});
@@ -1690,12 +1712,15 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
         unsigned int Opcode = MI.getOpcode();
         StringRef Mnemonic = TII->getName(Opcode);
         LLVM_DEBUG(dbgs() << "instr: " << Mnemonic << "\n");
+        size_t First = Groups.size();
         for (hbng::Transfer &T : generateGroups(MI)) {
           // One channel entry per send, at this group's index.
           for (size_t I = 0; I < T.Sends.size(); ++I)
             BBAnnotationInfo.SendIndices.push_back(Groups.size());
-          Groups.push_back(std::move(T));
+          Groups.push_back({std::move(T), 0});
         }
+        if (Groups.size() > First)
+          Groups.back().Writes = gprWrites(MI);
 
         // Check if the current instruction is a branch/return/call etc. but the
         // basic block does not end on it. If this is the case, we have to emit
@@ -1745,7 +1770,7 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
       std::vector<std::string> &Text = FI->BBAnnotationInfos[Index].Annotations;
       for (size_t I = 0; I < Groups.size(); ++I) {
         Text.push_back("@" + std::to_string(4 * I) + "\n");
-        std::string Statements = hbng::printTransfer(Terms, Groups[I]);
+        std::string Statements = hbng::printTransfer(Terms, Groups[I].T);
         SmallVector<StringRef, 8> Lines;
         StringRef(Statements).split(Lines, '\n', -1, false);
         for (StringRef Line : Lines)
