@@ -22,8 +22,8 @@ using u64 = uint64_t;
 //
 // A sum is a list of (atom, coefficient), sorted by the atoms' keys, which
 // spell the atoms independently of the order they were interned in: the
-// symbols (<SP>, <FP>, <X0>-<X30>, LO12), then the extensions, then the
-// masks.
+// symbols (<SP>, <FP>, <X0>-<X30>, LO12, LO12@<n>, S<i>), then the extensions,
+// then the masks.
 
 namespace {
 struct Atom {
@@ -101,6 +101,13 @@ Term TermPool::reg(unsigned N) {
   return symbol("2" + padded(N, 2), "<X" + utostr(N) + ">");
 }
 Term TermPool::lo12() { return symbol("3", "LO12"); }
+// Sorted after the symbols they stand for.
+Term TermPool::send(unsigned I) {
+  return symbol("4" + padded(I, 5), "S" + utostr(I));
+}
+Term TermPool::lo12At(unsigned Offset) {
+  return symbol("3@" + padded(Offset, 10), "LO12@" + utostr(Offset));
+}
 
 Term TermPool::add(Term A, Term B) {
   if (B.isConst())

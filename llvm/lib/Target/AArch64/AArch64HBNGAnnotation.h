@@ -59,6 +59,10 @@ public:
   // instruction has its own, so LO12 in two instructions can be two
   // different numbers.
   Term lo12();
+  // The value of the block's I-th channel entry ("S<I>").
+  Term send(unsigned I);
+  // The LO12 of the instruction at Offset in its block ("LO12@<Offset>").
+  Term lo12At(unsigned Offset);
 
   Term add(Term A, Term B);
   Term sub(Term A, Term B) { return add(A, neg(B)); }
