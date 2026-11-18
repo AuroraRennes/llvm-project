@@ -36,3 +36,62 @@ body: |
     $x0 = LDRXroX $x1, $x2, 0, 1
     RET undef $lr, implicit $x0
 ...
+
+# A send moves up to the previous one when nothing in between writes its
+# register or the page: the access in between keeps its own send.
+# CHECK-LABEL: name: hoist
+# CHECK:      HBNG_SEND_PAIR $x8, $x1, $x2
+# CHECK-NEXT: STRXui $x3, killed $x1, 0
+# CHECK-NEXT: $x0 = LDRXui killed $x2, 0
+---
+name: hoist
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x1, $x2, $x3, $lr
+    $x8 = ADRP target-flags(aarch64-page) &__hbng_chan
+    HBNG_SEND $x8, $x1
+    STRXui $x3, killed $x1, 0
+    HBNG_SEND killed $x8, $x2
+    $x0 = LDRXui killed $x2, 0
+    RET undef $lr, implicit $x0
+...
+
+# The second send's register is written in between: no pair.
+# CHECK-LABEL: name: written_between
+# CHECK:      HBNG_SEND $x8, $x1
+# CHECK-NEXT: $x2 = LDRXui killed $x1, 0
+# CHECK-NEXT: HBNG_SEND killed $x8, $x2
+---
+name: written_between
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x1, $lr
+    $x8 = ADRP target-flags(aarch64-page) &__hbng_chan
+    HBNG_SEND $x8, $x1
+    $x2 = LDRXui killed $x1, 0
+    HBNG_SEND killed $x8, $x2
+    $x0 = LDRXui killed $x2, 0
+    RET undef $lr, implicit $x0
+...
+
+# A store-exclusive in between: the send stays after it, so that no store
+# comes between the exclusive pair.
+# CHECK-LABEL: name: exclusive_between
+# CHECK:      HBNG_SEND $x8, $x1
+# CHECK-NEXT: early-clobber $w9 = STXRX $x3, $x1
+# CHECK-NEXT: HBNG_SEND killed $x8, $x2
+---
+name: exclusive_between
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $x1, $x2, $x3, $lr
+    $x8 = ADRP target-flags(aarch64-page) &__hbng_chan
+    HBNG_SEND $x8, $x1
+    early-clobber $w9 = STXRX $x3, $x1
+    HBNG_SEND killed $x8, $x2
+    $x0 = LDRXui killed $x2, 0
+    RET undef $lr, implicit $x0, implicit $w9
+...

@@ -53,8 +53,8 @@ define i64 @woffset(ptr %p, i32 %i) {
 ; is sent, with no copy of the offset into another one.
 ; CHECK-LABEL: trunc_index:
 ; CHECK-NOT:   mov w
-; CHECK:       str x1, {{\[}}[[P:x[0-9]+]]{{\]}}
-; CHECK-NEXT:  str x2, [{{x[0-9]+}}, w1, sxtw #3]
+; CHECK:       stp x1, {{x[0-9]+}}, {{\[}}[[P:x[0-9]+]]{{\]}}
+; CHECK:       str x2, [{{x[0-9]+}}, w1, sxtw #3]
 define i64 @trunc_index(ptr %p, i64 %n, i64 %v) {
   %i = trunc i64 %n to i32
   %q = getelementptr i64, ptr %p, i32 %i

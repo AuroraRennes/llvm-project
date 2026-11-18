@@ -113,6 +113,7 @@ STATISTIC(NumFbFPWrite, "Fallback cause: write of FP sent after it");
 // The final code.
 STATISTIC(NumFinalSendInstrs, "Send instructions (str and stp) emitted");
 STATISTIC(NumFinalSendPairs, "Send pairs (stp) emitted");
+STATISTIC(NumSendsHoisted, "Sends moved up to pair with the previous send");
 STATISTIC(NumFinalSentRegs, "Registers sent in the final code");
 STATISTIC(NumFinalPages, "Channel page adrps in the final code");
 
@@ -684,26 +685,58 @@ void AArch64HBNGCheckSends::insertFallback(MachineBasicBlock &MBB,
   }
 }
 
-// Two adjacent sends through the same page register become one pair: the
-// same values, received in the same order, in one store.
+// Two sends through the same page register, with no other send between them,
+// become one pair: the same values, received in the same order, in one store.
+// The second moves up to the first when nothing in between changes what it
+// sends, the page, or the block, and no exclusive access is crossed (a store
+// between a load-exclusive and its store-exclusive could clear the monitor).
 void AArch64HBNGCheckSends::formPairs(MachineBasicBlock &MBB) {
+  auto IsSingle = [](const MachineInstr &MI) {
+    return MI.getOpcode() == AArch64::HBNG_SEND ||
+           MI.getOpcode() == AArch64::HBNG_SEND_W;
+  };
   for (auto I = MBB.begin(); I != MBB.end();) {
     MachineInstr &First = *I++;
-    if (!isHBNGSendPseudo(First) || I == MBB.end() || !isHBNGSendPseudo(*I) ||
-        I->getOperand(0).getReg() != First.getOperand(0).getReg())
+    if (!IsSingle(First))
       continue;
-    MachineInstr &Second = *I++;
-    // A W register send (HBNG_SEND_W) is paired as its X register.
+    Register Page = First.getOperand(0).getReg();
+    MachineInstr *Second = nullptr;
+    SmallVector<MachineInstr *, 8> Between;
+    for (auto J = I; J != MBB.end() && Between.size() < 64; ++J) {
+      if (J->isDebugInstr())
+        continue;
+      if (isHBNGSendPseudo(*J)) {
+        if (IsSingle(*J) && J->getOperand(0).getReg() == Page)
+          Second = &*J;
+        break;
+      }
+      if (endsAnnotationBlock(*J) || J->isBundle() || J->isInlineAsm() ||
+          J->isTerminator() || isExclusiveAccess(J->getOpcode()) ||
+          J->modifiesRegister(Page, TRI))
+        break;
+      Between.push_back(&*J);
+    }
+    if (!Second)
+      continue;
+    Register B = getHBNGSendPseudoRegs(*Second)[0];
+    if (any_of(Between, [&](MachineInstr *MI) {
+          return MI->modifiesRegister(B, TRI);
+        }))
+      continue;
+    bool Moved = !Between.empty();
     Register A = getHBNGSendPseudoRegs(First)[0];
-    Register B = getHBNGSendPseudoRegs(Second)[0];
+    // Moved up, the second send no longer ends its registers' lives.
     BuildMI(MBB, First.getIterator(), First.getDebugLoc(),
             TII->get(AArch64::HBNG_SEND_PAIR))
-        .addReg(First.getOperand(0).getReg(),
-                getKillRegState(Second.getOperand(0).isKill()))
+        .addReg(Page, getKillRegState(!Moved && Second->getOperand(0).isKill()))
         .addReg(A, getKillRegState(First.getOperand(1).isKill()))
-        .addReg(B, getKillRegState(Second.getOperand(1).isKill()));
+        .addReg(B, getKillRegState(!Moved && Second->getOperand(1).isKill()));
+    if (Moved)
+      ++NumSendsHoisted;
+    if (I == Second->getIterator())
+      ++I;
     First.eraseFromParent();
-    Second.eraseFromParent();
+    Second->eraseFromParent();
   }
 }
 
