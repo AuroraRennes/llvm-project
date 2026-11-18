@@ -34,6 +34,7 @@ struct Atom {
   Ext ExtKind = Ext::UXTW; // UXTW or SXTW
   unsigned Shift = 0;
   u64 Mask = 0;
+  unsigned Unit = 0; // the sum 1 * this atom
 };
 
 struct Sum {
@@ -71,7 +72,12 @@ struct TermPool::Impl {
     return {It->second, C};
   }
 
-  Term ofAtom(Atom A) { return make({{atom(std::move(A)), 1}}, 0); }
+  Term ofAtom(Atom A) {
+    unsigned Id = atom(std::move(A));
+    if (!Atoms[Id].Unit)
+      Atoms[Id].Unit = make({{Id, 1}}, 0).Sum;
+    return {Atoms[Id].Unit, 0};
+  }
 
   bool atomLess(unsigned A, unsigned B) const {
     return Atoms[A].Key < Atoms[B].Key;
@@ -174,6 +180,44 @@ Term TermPool::mask(Term A, u64 Mask) {
   At.Key = "y(" + P->Sums[A.Sum].Key + "+" + utohexstr(A.Const) + "&" +
            utohexstr(Mask) + ")";
   return P->ofAtom(std::move(At));
+}
+
+Term TermPool::subst(Term A,
+                     function_ref<std::optional<Term>(Term Symbol)> Map) {
+  // Sums and atoms are deques: these references survive new terms.
+  const auto &Cs = P->Sums[A.Sum].Coeffs;
+  SmallVector<Term, 4> Parts;
+  bool Changed = false;
+  for (const auto &[Id, F] : Cs) {
+    const Atom &At = P->Atoms[Id];
+    Term Unit = {At.Unit, 0}, Part = Unit;
+    // Considering that Map makes <X1> become S0 + 4:
+    switch (At.K) {
+    case Atom::Symbol:
+      // <X1> becomes S0 + 4; a symbol Map leaves out (<SP>) stays.
+      if (std::optional<Term> By = Map(Unit))
+        Part = *By;
+      break;
+    case Atom::Extend:
+      // ext(<X1>, sxtw, 2) becomes ext(S0 + 4, sxtw, 2).
+      Part = ext(subst(At.Inner, Map), At.ExtKind, At.Shift);
+      break;
+    case Atom::Masked:
+      // (<X1> & -16) becomes (S0 + 4 & -16).
+      Part = mask(subst(At.Inner, Map), At.Mask);
+      break;
+    }
+    Changed |= Part != Unit;
+    Parts.push_back(Part);
+  }
+  if (!Changed)
+    return A;
+  // The parts times their coefficients, plus the constant:
+  // 8*<X1> + <SP> - 16 becomes 8*S0 + 32 + <SP> - 16 = <SP> + 8*S0 + 16.
+  Term R = constant(A.Const);
+  for (size_t I = 0; I < Parts.size(); ++I)
+    R = add(R, mul(Parts[I], P->Sums[A.Sum].Coeffs[I].second));
+  return R;
 }
 
 static std::string signedText(u64 V) { return itostr(int64_t(V)); }

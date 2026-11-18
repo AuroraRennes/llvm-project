@@ -8,6 +8,7 @@
 #define LLVM_LIB_TARGET_AARCH64_AARCH64HBNGANNOTATION_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include <cstdint>
@@ -74,6 +75,9 @@ public:
   Term ext(Term A, Ext Kind, unsigned Shift);
   // (A & Mask).
   Term mask(Term A, uint64_t Mask);
+  // A with every symbol S for which Map(S) gives a term replaced by that
+  // term, inside extensions and masks too.
+  Term subst(Term A, function_ref<std::optional<Term>(Term Symbol)> Map);
 
   // T as the annotations spell it: "<X1> + 8*<X2> - 16".
   std::string str(Term T) const;
