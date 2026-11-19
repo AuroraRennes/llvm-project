@@ -105,6 +105,8 @@ class AArch64AsmPrinter : public AsmPrinter {
   // HBNG - BBT and annotations main storage, used by at section emission and
   // obtained by combining per-function tables
   std::vector<HBNGAnnotationInfo> HBNGAnnotationInfos;
+  // HBNG - the start and end of each untracked function, for .hbngskip
+  std::vector<std::pair<MCSymbol *, MCSymbol *>> HBNGSkipRanges;
 #ifndef NDEBUG
   unsigned InstsEmitted;
 #endif
@@ -362,6 +364,7 @@ private:
   // HBNG emission to dedicated sections
   void emitHBNGAnnotationSection(Module &M);
   void emitHBNGBasicBlockTableSection();
+  void emitHBNGSkipSection();
   void emitFunctionBodyStart() override;
   void emitBasicBlockStart(const MachineBasicBlock &MBB) override;
 
@@ -1148,6 +1151,7 @@ void AArch64AsmPrinter::emitEndOfAsmFile(Module &M) {
   emitHBNGAnnotationSection(M);
   // HBNG: Emit the basic block table section
   emitHBNGBasicBlockTableSection();
+  emitHBNGSkipSection();
 }
 
 void AArch64AsmPrinter::emitLOHs() {
@@ -1168,6 +1172,11 @@ void AArch64AsmPrinter::emitLOHs() {
 void AArch64AsmPrinter::emitFunctionBodyEnd() {
   if (!AArch64FI->getLOHRelated().empty())
     emitLOHs();
+  if (AArch64FI->HBNGUntracked) {
+    MCSymbol *End = OutContext.createTempSymbol();
+    OutStreamer->emitLabel(End);
+    HBNGSkipRanges.emplace_back(CurrentFnSym, End);
+  }
 }
 
 // FIXME: Move to a subclass
@@ -1221,6 +1230,19 @@ void AArch64AsmPrinter::emitHBNGBasicBlockTableSection() {
   }
 }
 
+// The untracked functions' code, as pairs of 32-bit start and end addresses,
+// in a section that is not loaded.
+void AArch64AsmPrinter::emitHBNGSkipSection() {
+  if (HBNGSkipRanges.empty())
+    return;
+  OutStreamer->switchSection(
+      OutContext.getELFSection(hbng::SkipSection, ELF::SHT_PROGBITS, 0));
+  OutStreamer->emitValueToAlignment(Align(4));
+  for (auto [Start, End] : HBNGSkipRanges) {
+    OutStreamer->emitValue(MCSymbolRefExpr::create(Start, OutContext), 4);
+    OutStreamer->emitValue(MCSymbolRefExpr::create(End, OutContext), 4);
+  }
+}
 
 void AArch64AsmPrinter::emitFunctionBodyStart() {
   AsmPrinter::emitFunctionBodyStart();

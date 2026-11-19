@@ -628,6 +628,9 @@ public:
     // HBNG - Annotation information storage
   std::vector<HBNGAnnotationInfo> BBAnnotationInfos;
   mutable unsigned BBTIndex = 0;
+  // HBNG - the function is deliberately untracked (hbng_no_instr): its code
+  // goes in .hbngskip instead of the block table.
+  bool HBNGUntracked = false;
 
 private:
   // Hold the lists of LOHs.

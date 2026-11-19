@@ -1689,10 +1689,12 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
 
     // A hbng_no_instr function is uncompiled code for HBNG: no annotations, no
     // block table entries (and no sends, see the STM send pass). It runs, for
-    // instance, before the STM address is in place (crt's _start_c).
+    // instance, before the STM address is in place (crt's _start_c). Its code
+    // is declared untracked in .hbngskip.
     const Function &F = MF.getFunction();
     if (F.hasFnAttribute("hbng_no_instr")) {
       LLVM_DEBUG(dbgs() << "Skipping annotations for " << F.getName() << "\n");
+      MF.getInfo<AArch64FunctionInfo>()->HBNGUntracked = true;
       return false;
     }
 

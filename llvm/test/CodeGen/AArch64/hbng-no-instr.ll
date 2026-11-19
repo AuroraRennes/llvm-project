@@ -1,6 +1,7 @@
 ; A hbng_no_instr function is uncompiled code for HBNG: no sends, no block
 ; labels, no annotations, no block table entries, but its own block labels are
-; still emitted, so its branches resolve. The other functions are unaffected.
+; still emitted, so its branches resolve, and its code is declared untracked
+; in .hbngskip. The other functions are unaffected.
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 < %s | FileCheck %s
 ; RUN: llc -mtriple=aarch64-linux-musl -mattr=+reserve-x18 -hbng -O2 -filetype=obj < %s -o /dev/null
 
@@ -10,7 +11,9 @@
 ; CHECK:       .LBB0_1:
 ; CHECK-NOT:   x18
 ; CHECK:       b.ne .LBB0_1
-; CHECK:       .Lfunc_end0:
+; CHECK:       ret
+; CHECK-NEXT:  [[END:.Ltmp[0-9]+]]:
+; CHECK-NEXT:  .Lfunc_end0:
 define void @start_c(ptr %p, i64 %n) "hbng_no_instr" {
 entry:
   br label %loop
@@ -41,6 +44,10 @@ exit:
 ; CHECK-NEXT:  .hword 1
 ; CHECK-NEXT:  .hword 0
 ; CHECK-NEXT:  .p2align 2
+; CHECK-NEXT:  .section .hbngskip,"",@progbits
+; CHECK-NEXT:  .p2align 2
+; CHECK-NEXT:  .word start_c
+; CHECK-NEXT:  .word [[END]]
 ; CHECK-NOT:   HBNG_start_c
 define i64 @user(ptr %p) {
   %v = load i64, ptr %p
