@@ -81,13 +81,16 @@ define void @directive() {
   ret void
 }
 
-; Statements separated by ';', the barriers annotating nothing.
+; Statements separated by ';', the barriers annotating nothing. The isb ends
+; the block.
 ; CHECK-LABEL: HBNG_two_annot:
 ; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "@4\n"
 ; CHECK-NEXT:  .ascii "unsupported \"INLINEASM fsqrt\"\n"
 ; CHECK-NEXT:  .ascii "@8\n"
-; CHECK-NEXT:  .ascii "@12\n"
+; CHECK-NEXT:  .ascii "END\n"
+; CHECK-NEXT:  HBNG_two_split_0_annot:
+; CHECK-NEXT:  .ascii "@0\n"
 ; CHECK-NEXT:  .ascii "END\n"
 define void @two() {
   call void asm sideeffect "dmb ish; fsqrt d0, d0; isb", "~{d0},~{memory}"()

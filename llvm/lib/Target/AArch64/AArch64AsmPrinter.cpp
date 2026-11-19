@@ -63,6 +63,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/HBNGFormat.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/TargetParser/Triple.h"
@@ -1199,18 +1200,23 @@ void AArch64AsmPrinter::emitHBNGBasicBlockTableSection() {
       MCSymbol *AnnotSym = AnnotationInfo.BBAnnotSymbol;
       LLVM_DEBUG(dbgs() << "Symbol: " << Sym->getName() << " is defined: " << Sym->isDefined() << "\n");
       LLVM_DEBUG(dbgs() << "Annotation Symbol: " << AnnotSym->getName() << " is defined: " << AnnotSym->isDefined() << "\n");
-      OutStreamer->emitValue(MCSymbolRefExpr::create(Sym, OutContext), 8);
-      OutStreamer->emitValue(MCSymbolRefExpr::create(AnnotSym, OutContext), 8);
-      // Instruction count, FIFO entry count and the instruction index of each
-      // entry, 16 bits each, padded to 8 bytes.
-      if (AnnotationInfo.NumInstrs > UINT16_MAX)
+      // Both addresses fit in 32 bits (a static image loaded low): the linker
+      // resolves them as absolute 32-bit relocations.
+      OutStreamer->emitValue(MCSymbolRefExpr::create(Sym, OutContext), 4);
+      OutStreamer->emitValue(MCSymbolRefExpr::create(AnnotSym, OutContext), 4);
+      // Instruction count with the waypoint bit, send count and the
+      // instruction index of each send, 16 bits each, padded to 4 bytes.
+      if (AnnotationInfo.NumInstrs > hbng::MaxBlockInstrs)
         report_fatal_error("HBNG: block " + Sym->getName() +
                            " too long for the block table");
-      OutStreamer->emitIntValue(AnnotationInfo.NumInstrs, 2);
+      uint16_t Count = AnnotationInfo.NumInstrs;
+      if (AnnotationInfo.EndsInWaypoint)
+        Count |= hbng::WaypointBit;
+      OutStreamer->emitIntValue(Count, 2);
       OutStreamer->emitIntValue(AnnotationInfo.SendIndices.size(), 2);
       for (unsigned Idx : AnnotationInfo.SendIndices)
         OutStreamer->emitIntValue(Idx, 2);
-      OutStreamer->emitValueToAlignment(Align(8));
+      OutStreamer->emitValueToAlignment(Align(hbng::EntryAlign));
     }
   }
 }

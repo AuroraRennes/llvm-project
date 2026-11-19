@@ -18,13 +18,14 @@
 ; ON-NEXT:     str x0, [x18]
 ; ON-NEXT:     ldr x0, [x0]
 ; ON:          .section .hbngannot
+; The instruction count (3) with the waypoint bit: the block ends in a ret.
 ; ON:          .section .hbngbbt
-; ON-NEXT:     .xword HBNG_load
-; ON-NEXT:     .xword HBNG_load_annot
-; ON-NEXT:     .hword 3
+; ON-NEXT:     .word HBNG_load
+; ON-NEXT:     .word HBNG_load_annot
+; ON-NEXT:     .hword 32771
 ; ON-NEXT:     .hword 1
 ; ON-NEXT:     .hword 0
-; ON-NEXT:     .p2align 3
+; ON-NEXT:     .p2align 2
 
 ; ERR: HBNG: x18 holds the STM address and must be reserved (-ffixed-x18), in function 'load'
 

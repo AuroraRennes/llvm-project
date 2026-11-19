@@ -100,20 +100,21 @@ define i64 @vla(i64 %n) {
   ret i64 %a
 }
 
-; The table entries: instruction count, number of sends, then the instruction
-; index of each send (0 twice for the stp of compose), padded to 8 bytes.
+; The table entries: instruction count with the waypoint bit (0x8000, both
+; blocks end in a ret), number of sends, then the instruction index of each
+; send (0 twice for the stp of compose), padded to 4 bytes.
 ; TBL:         .section .hbngbbt
-; TBL-NEXT:    .xword HBNG_compose
-; TBL-NEXT:    .xword HBNG_compose_annot
-; TBL-NEXT:    .hword 4
+; TBL-NEXT:    .word HBNG_compose
+; TBL-NEXT:    .word HBNG_compose_annot
+; TBL-NEXT:    .hword 32772
 ; TBL-NEXT:    .hword 2
 ; TBL-NEXT:    .hword 0
 ; TBL-NEXT:    .hword 0
-; TBL-NEXT:    .p2align 3
-; TBL-NEXT:    .xword HBNG_lo12
-; TBL-NEXT:    .xword HBNG_lo12_annot
-; TBL-NEXT:    .hword 6
+; TBL-NEXT:    .p2align 2
+; TBL-NEXT:    .word HBNG_lo12
+; TBL-NEXT:    .word HBNG_lo12_annot
+; TBL-NEXT:    .hword 32774
 ; TBL-NEXT:    .hword 2
 ; TBL-NEXT:    .hword 1
 ; TBL-NEXT:    .hword 3
-; TBL-NEXT:    .p2align 3
+; TBL-NEXT:    .p2align 2

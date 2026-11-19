@@ -53,12 +53,15 @@ enum class SignReturnAddress {
 //      (4) NumInstrs:     the number of instructions in the block
 //      (5) SendIndices:   the index of the instruction of each FIFO entry, in
 //                         channel order (twice for an stp)
+//      (6) EndsInWaypoint: the last instruction is a branch, call, return or
+//                         isb, for which the trace emits an atom
 struct HBNGAnnotationInfo {
   MCSymbol *BBSymbol;
   MCSymbol *BBAnnotSymbol;
   std::vector<std::string> Annotations;
   unsigned NumInstrs = 0;
   std::vector<unsigned> SendIndices;
+  bool EndsInWaypoint = false;
 };
 
 /// AArch64FunctionInfo - This class is derived from MachineFunctionInfo and

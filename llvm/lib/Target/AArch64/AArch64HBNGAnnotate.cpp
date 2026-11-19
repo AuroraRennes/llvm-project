@@ -153,6 +153,29 @@ static bool containsSVC(MachineInstr &MI) {
   return llvm::is_contained(getInlineAsmMnemonics(MI), "svc");
 }
 
+// An isb ends its block: the trace emits an atom for it. In inline asm it must
+// be the statement's last instruction, where the block can end.
+static bool isISB(MachineInstr &MI) {
+  if (MI.getOpcode() == AArch64::ISB)
+    return true;
+  SmallVector<std::string, 4> Mnemonics = getInlineAsmMnemonics(MI);
+  if (!llvm::is_contained(Mnemonics, "isb"))
+    return false;
+  if (Mnemonics.back() != "isb") {
+    std::string Msg = ("HBNG: isb must be the last instruction of an inline "
+                       "asm statement, in function '" +
+                       MI.getMF()->getName() + "'")
+                          .str();
+    reportFatalUsageError(StringRef(Msg));
+  }
+  return true;
+}
+
+// The trace emits an atom for the instruction: a branch, call, return or isb.
+static bool isWaypoint(MachineInstr &MI) {
+  return MI.isBranch() || MI.isReturn() || MI.isCall() || isISB(MI);
+}
+
 //===----------------------------------------------------------------------===//
 // The annotation language
 //
@@ -1710,8 +1733,12 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
       unsigned SplitIndex = 0;
       // The current block's groups, one per instruction.
       std::vector<hbng::Group> Groups;
+      // The block's last instruction with groups.
+      MachineInstr *LastMI = nullptr;
       auto Close = [&] {
         BBAnnotationInfo.NumInstrs = Groups.size();
+        BBAnnotationInfo.EndsInWaypoint = LastMI && isWaypoint(*LastMI);
+        LastMI = nullptr;
         Blocks.push_back({FI->BBAnnotationInfos.size(), std::move(Groups)});
         Groups.clear();
         FI->BBAnnotationInfos.push_back(BBAnnotationInfo);
@@ -1729,16 +1756,17 @@ bool AArch64HBNGAnnotate::runOnMachineFunction(MachineFunction &MF) {
             BBAnnotationInfo.SendIndices.push_back(Groups.size());
           Groups.push_back({std::move(T), 0});
         }
-        if (Groups.size() > First)
+        if (Groups.size() > First) {
           Groups.back().Writes = gprWrites(MI);
+          LastMI = &MI;
+        }
 
         // Check if the current instruction is a branch/return/call etc. but the
         // basic block does not end on it. If this is the case, we have to emit
         // a symbol and push it to the bbt to comply to the CoreSight way of defining
         // Atoms.
         bool IsLastInstr = std::next(MIIt) == End;
-        bool IsCtrlFlow = MI.isBranch() || MI.isReturn() || MI.isCall();
-        if ((IsCtrlFlow || containsSVC(MI)) && !IsLastInstr) {
+        if ((isWaypoint(MI) || containsSVC(MI)) && !IsLastInstr) {
           Close();
 
           // Insert the pseudo instruction in the MBB
