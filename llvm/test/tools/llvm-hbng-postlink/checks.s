@@ -1,11 +1,11 @@
 # REQUIRES: aarch64-registered-target, ld.lld
-## llvm-hbng-postlink sorts the block table by address, and adds its index and
-## the format version.
+## llvm-hbng-postlink sorts the block table by address, adds its index and the
+## format version, and fails on each table that does not describe the code.
 
 # RUN: echo 'SECTIONS { . = 0x10000; .text : { *(.text) } . = 0x20000; \
 # RUN:   .hbngannot : { *(.hbngannot) } .hbngbbt : { *(.hbngbbt) } }' > %t.lds
 
-## A table written out of order.
+## A good table, written out of order.
 # RUN: llvm-mc -filetype=obj -triple=aarch64 %s -o %t.o
 # RUN: ld.lld -T %t.lds %t.o -o %t
 # RUN: llvm-hbng-postlink %t -o %t.out
@@ -36,6 +36,44 @@
 
 # TWICE: error: {{.*}}: already has .hbngidx
 # OBJ:   error: {{.*}}: not a linked executable
+
+## One failing check per case.
+# RUN: llvm-mc -filetype=obj -triple=aarch64 --defsym OVERLAP=1 %s -o %t.overlap.o
+# RUN: ld.lld -T %t.lds %t.overlap.o -o %t.overlap
+# RUN: not llvm-hbng-postlink %t.overlap -o /dev/null 2>&1 | FileCheck %s --check-prefix=OVERLAP
+# OVERLAP: error: {{.*}}: blocks at 0x0001001c (f+0x10) and 0x00010028 (call) overlap
+
+# RUN: llvm-mc -filetype=obj -triple=aarch64 --defsym OUTSIDE=1 %s -o %t.outside.o
+# RUN: ld.lld -T %t.lds %t.outside.o -o %t.outside
+# RUN: not llvm-hbng-postlink %t.outside -o /dev/null 2>&1 | FileCheck %s --check-prefix=OUTSIDE
+# OUTSIDE: error: {{.*}}: block at 0x00020000 is not inside an executable section{{$}}
+
+# RUN: llvm-mc -filetype=obj -triple=aarch64 --defsym ANNOT=1 %s -o %t.annot.o
+# RUN: ld.lld -T %t.lds %t.annot.o -o %t.annot
+# RUN: not llvm-hbng-postlink %t.annot -o /dev/null 2>&1 | FileCheck %s --check-prefix=ANNOT
+# ANNOT: error: {{.*}}: block at 0x00010034 (g): annotations at 0x10034 outside .hbngannot
+
+# RUN: llvm-mc -filetype=obj -triple=aarch64 --defsym WAYPOINT=1 %s -o %t.waypoint.o
+# RUN: ld.lld -T %t.lds %t.waypoint.o -o %t.waypoint
+# RUN: not llvm-hbng-postlink %t.waypoint -o /dev/null 2>&1 | FileCheck %s --check-prefix=WAYPOINT
+# WAYPOINT: error: {{.*}}: block at 0x0001000c (f) has the waypoint bit but ends in 0xd2800022 at 0x00010010 (f+0x4)
+# WAYPOINT: error: {{.*}}: block at 0x00010034 (g) has no waypoint bit but ends in 0xd65f03c0 at 0x00010034 (g)
+
+# RUN: llvm-mc -filetype=obj -triple=aarch64 --defsym CONTINUE=1 %s -o %t.continue.o
+# RUN: ld.lld -T %t.lds %t.continue.o -o %t.continue
+# RUN: not llvm-hbng-postlink %t.continue -o /dev/null 2>&1 | FileCheck %s --check-prefix=CONTINUE
+# CONTINUE: error: {{.*}}: block at 0x0001001c (f+0x10) can continue but is not followed by an entry at 0x00010028 (call)
+# CONTINUE: error: {{.*}}: code without an entry from 0x00010028 (call) to 0x1002c
+
+# RUN: llvm-mc -filetype=obj -triple=aarch64 --defsym UNCOVERED=1 %s -o %t.uncovered.o
+# RUN: ld.lld -T %t.lds %t.uncovered.o -o %t.uncovered
+# RUN: not llvm-hbng-postlink %t.uncovered -o /dev/null 2>&1 | FileCheck %s --check-prefix=UNCOVERED
+# UNCOVERED: error: {{.*}}: code without an entry from 0x00010000 (_start) to 0x10008
+
+# RUN: llvm-mc -filetype=obj -triple=aarch64 --defsym SKIP=1 %s -o %t.skip.o
+# RUN: ld.lld -T %t.lds %t.skip.o -o %t.skip
+# RUN: not llvm-hbng-postlink %t.skip -o /dev/null 2>&1 | FileCheck %s --check-prefix=SKIP
+# SKIP: error: {{.*}}: skipped range at 0x00010000 (_start) overlaps block at 0x0001000c (f)
 
 .macro entry block, annot, count, waypoint, sends:vararg
   .pushsection .hbngbbt,"a",@progbits
@@ -102,10 +140,37 @@ stop:
 annot:
   .ascii "@0\nEND\n"
 
+.ifndef UNCOVERED
+.ifdef SKIP
+  skip _start, f + 4
+.else
   skip _start, .Lstart_end
+.endif
+.endif
   entry stop, annot, 1, 1
+.ifdef ANNOT
+  entry g, g, 1, 1
+.else
+.ifdef WAYPOINT
+  entry g, annot, 1, 0
+.else
   entry g, annot, 1, 1
+.endif
+.endif
   entry noreturn, annot, 1, 1
+.ifndef CONTINUE
   entry call, annot, 1, 1, 0
+.endif
+.ifdef OVERLAP
+  entry .Lloop, annot, 4, 0
+.else
   entry .Lloop, annot, 3, 1
+.endif
+.ifdef WAYPOINT
+  entry f, annot, 2, 1
+.else
   entry f, annot, 2, 0
+.endif
+.ifdef OUTSIDE
+  entry annot, annot, 1, 0
+.endif
