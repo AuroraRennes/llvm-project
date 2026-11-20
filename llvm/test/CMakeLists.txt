@@ -108,6 +108,7 @@ set(LLVM_TEST_DEPENDS
   llvm-gsymutil
   llvm-ir2vec
   llvm-isel-fuzzer
+  llvm-hbng-postlink
   llvm-ifs
   llvm-install-name-tool
   llvm-jitlink

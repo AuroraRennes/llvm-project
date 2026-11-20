@@ -102,6 +102,10 @@ config.test_exec_root = os.path.join(config.llvm_obj_root, "test")
 # Tweak the PATH to include the tools dir.
 llvm_config.with_environment("PATH", config.llvm_tools_dir, append_path=True)
 
+# ld.lld, when built with LLVM (llvm-hbng-postlink's tests link with it).
+if lit.util.which("ld.lld", config.llvm_tools_dir):
+    config.available_features.add("ld.lld")
+
 # Propagate some variables from the host environment.
 llvm_config.with_system_environment(["HOME", "INCLUDE", "LIB", "TMP", "TEMP"])
 
@@ -279,6 +283,7 @@ tools.extend(
         "llvm-extract-bundle-entry",
         "llvm-ir2vec",
         "llvm-isel-fuzzer",
+        "llvm-hbng-postlink",
         "llvm-ifs",
         "llvm-install-name-tool",
         "llvm-jitlink",
